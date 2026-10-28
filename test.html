@@ -144,9 +144,14 @@
 
   function start(cfg, role){
     hideAll();
-    try { firebase.initializeApp(cfg); db = firebase.database(); }
+    const lp = new URLSearchParams(location.search).get('lp') === '1';
+    try {
+      firebase.initializeApp(cfg); db = firebase.database();
+      if (lp) db.INTERNAL.forceLongPolling();
+    }
     catch(e){ show('setup'); $('cfgErr').textContent = 'Ошибка настроек: ' + e.message; return; }
     db.ref('.info/serverTimeOffset').on('value', s => { offset = s.val() || 0; });
+    document.querySelector('.sub').textContent = 'Режим связи: ' + (lp ? 'B (long polling)' : 'A (обычный)');
     const studentLink = location.href.split('#')[0];
     $('shareLink').textContent = studentLink;
     $('copyLink').onclick = () => {
@@ -178,13 +183,19 @@
   // ---- учитель ----
   function runTeacher(){
     hideAll(); show('teacher');
-    let lastT = 0, pres = {};
+    let lastT = 0, pres = {}; const lags = [];
     db.ref('.info/connected').on('value', s => $('tcConn').textContent = s.val() ? '🟢 Ты на связи' : '🔴 Нет связи с сервером');
     db.ref('test/live').on('value', s => {
       const v = s.val() || {};
       $('liveText').textContent = v.text || '';
       $('chars').textContent = (v.text || '').length;
-      if (v.t) { lastT = v.t; const d = Math.max(0, now() - v.t); $('lag').textContent = d < 1000 ? d + ' мс' : (d/1000).toFixed(1) + ' с'; }
+      if (v.t) {
+        lastT = v.t; const d = Math.max(0, now() - v.t);
+        lags.push(d); if (lags.length > 10) lags.shift();
+        const avg = Math.round(lags.reduce((a,b)=>a+b,0) / lags.length);
+        const f = x => x < 1000 ? x + ' мс' : (x/1000).toFixed(1) + ' с';
+        $('lag').textContent = f(d) + ' (сред. ' + f(avg) + ')';
+      }
       paint();
     });
     db.ref('test/presence').on('value', s => { pres = s.val() || {}; paint(); });
