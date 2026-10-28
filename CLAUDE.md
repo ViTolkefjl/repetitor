@@ -148,7 +148,8 @@ GitHub Pages обновляется ~1 минуту после пуша.
 голосом Ava (Premium) на Маке Виталия: `node tools/audio-phrases.js` → `tools/make-audio.sh` (пушим) → Виталий запускает в Терминале
 `curl -fsSL https://vitolkefjl.github.io/repetitor/tools/make-audio.sh -o ~/Desktop/make-audio.sh && bash ~/Desktop/make-audio.sh`
 → присылает `repetitor-audio.zip` → кладём файлы в `audio/` и запускаем `node tools/audio-index.js`.
-Файл: `audio/<FNV-1a id фразы>.m4a` (обычно) и `-s.m4a` (медленно). Нет файла — работает синтез браузера.
+Файл: `audio/<FNV-1a id фразы>.m4a` (обычно) и `-s.m4a` (медленно, как записал Mac). Нет файла — работает синтез браузера.
+НЕ замедлять записи ffmpeg (atempo): Виталию не понравились призвуки — кладём оригиналы из архива как есть.
 После нового урока: снова `node tools/audio-phrases.js`, пушим, просим Виталия запустить команду (запишутся все фразы заново).
 
 ## Тесты
