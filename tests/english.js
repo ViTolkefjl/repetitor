@@ -23,6 +23,9 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   });
   await ctx.route(/gstatic\.com\/firebasejs\/.*\.js$/, r => r.fulfill({ contentType: 'text/javascript', body: mock }));
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
+  // FNV-1a от «always» — как в english.js
+  const fnv = t => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };
+  await ctx.route(/\/audio\/index\.json/, r => r.fulfill({ contentType: 'application/json', body: JSON.stringify([fnv('always')]) }));
   const errs = [];
 
   const T = await ctx.newPage();
@@ -75,14 +78,24 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
     await S.mouse.up();
   }
 
+  // записанные файлы: «always» есть в audio/index.json → играем файл, а не синтез
+  await S.evaluate(() => { window.__played = []; window.Audio = function (src) { this.src = src; this.play = () => { window.__played.push(src); setTimeout(() => this.onended && this.onended(), 30); return Promise.resolve(); }; this.pause = () => {}; }; });
+
   // правило про времена: две группы рядом, перевёртыши, озвучка, лайфхаки
   ok((await S.$$('[data-task="t9"] .vs-col')).length === 2 && !!(await S.$('[data-task="t9"] .vs-or')), 'Simple и Continuous — две колонки рядом');
   const fc = S.locator('[data-task="t9"] [data-flip]').first();
   await fc.scrollIntoViewIfNeeded();
   await fc.locator('[data-say]').click();
-  let said = await S.evaluate(() => window.__said.slice(-1)[0]);
-  ok(said.text === 'always' && said.rate <= 0.7 && said.voice === 'Ava (Premium)', '🔊 произносит слово медленно лучшим голосом: ' + JSON.stringify(said));
+  const alwaysId = await S.evaluate(() => EN.audioId('always'));
+  ok((await S.evaluate(() => window.__played.slice(-1)[0])) === 'audio/' + alwaysId + '.m4a', '🔊 играет записанный файл живого голоса, если он есть');
   await fc.locator('[data-say]').click();
+  ok((await S.evaluate(() => window.__played.slice(-1)[0])) === 'audio/' + alwaysId + '-s.m4a', 'повторное нажатие — медленная запись');
+  // без записи — синтез, медленно, лучшим голосом
+  const nv = S.locator('[data-task="t9"] [data-flip]').nth(4);
+  await nv.locator('[data-say]').click();
+  let said = await S.evaluate(() => window.__said.slice(-1)[0]);
+  ok(said.text === 'never' && said.rate <= 0.7 && said.voice === 'Ava (Premium)', 'нет записи — синтез медленно лучшим голосом: ' + JSON.stringify(said));
+  await nv.locator('[data-say]').click();
   said = await S.evaluate(() => window.__said.slice(-1)[0]);
   ok(said.rate <= 0.5, 'повторное нажатие — ещё медленнее');
   ok(!(await fc.evaluate(e => e.classList.contains('flipped'))), '🔊 не переворачивает карточку');

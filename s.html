@@ -141,7 +141,7 @@
   /* ---------- выбор голоса для английского (настраивается один раз на этом компьютере) ---------- */
   function voiceBox() {
     const vs = EN.voices();
-    if (!EN.canSay || !vs.length) return '';
+    if (!EN.canSpeech || !vs.length) return '';
     const cur = EN.currentVoice();
     return '<details class="voice-box"><summary>🔊 Голос для английского</summary>'
       + '<p class="muted">Выбери голос, который звучит живее. Лучшие — с пометкой Premium, Enhanced или Google.</p>'
@@ -155,7 +155,7 @@
     sel.onchange = () => { EN.setVoice(sel.value); EN.say('Hello! This is your book. It is yours.'); };
     document.getElementById('voiceTest').onclick = () => EN.say('Hello! This is your book. It is yours.');
   }
-  if (EN.canSay) { try { speechSynthesis.addEventListener('voiceschanged', () => { if (!viewId && !document.getElementById('voiceSel')) renderHome(); }); } catch (e) {} }
+  if (EN.canSpeech) { try { speechSynthesis.addEventListener('voiceschanged', () => { if (!viewId && !document.getElementById('voiceSel')) renderHome(); }); } catch (e) {} }
 
   function setHash(l) {
     const h = 'k=' + room + (l ? '&l=' + l : '');

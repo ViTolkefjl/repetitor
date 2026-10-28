@@ -9,10 +9,22 @@
   const pic = p => p ? '<div class="pic" aria-hidden="true">' + esc(p) + '</div>' : '';
   const tr = t => t ? '<div class="tr">' + esc(t) + '</div>' : '';
 
-  /* ---------- озвучка (синтез речи браузера) ----------
-     Берём самый живой английский голос, какой есть на устройстве (Premium/Enhanced, Google, Samantha…),
-     говорим медленно, «your / yours» — по отдельности с паузой; повторное нажатие — ещё медленнее. */
-  const canSay = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  /* ---------- озвучка ----------
+     1) Если для фразы есть записанный файл (audio/<id>.m4a, голос Ava Premium с Mac) — играем его.
+     2) Иначе — синтез речи браузера: самый живой английский голос, медленно.
+     «your / yours», «I → me» — по частям с паузой; повторное нажатие — медленнее. */
+  const canSpeech = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  const canSay = true;
+  const splitParts = s => String(s).replace(/[«»"]/g, '').trim().split(/\s*(?:\/|→|—|–|·)\s*/).filter(Boolean);
+  function audioId(s) {                      // FNV-1a 32 бит — так же, как в tools/audio-phrases.js
+    let h = 0x811c9dc5;
+    const t = String(s).trim().replace(/\s+/g, ' ');
+    for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, '0');
+  }
+  let recorded = new Set();
+  fetch('audio/index.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : []).then(ids => { recorded = new Set(ids || []); }).catch(() => {});
+
   const ROBOT = /compact|eloquence|albert|bad news|bahh|bells|boing|bubbles|cellos|wobble|good news|jester|organ|superstar|trinoids|whisper|zarvox|fred|junior|ralph|kathy|grandma|grandpa|rocko|shelley|flo|eddy|reed|sandy/i;
   function score(v) {
     if (!/^en/i.test(v.lang)) return -1e3;
@@ -27,7 +39,7 @@
   const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
   let voice = null;
   function voices() {
-    if (!canSay) return [];
+    if (!canSpeech) return [];
     return (speechSynthesis.getVoices() || []).filter(v => /^en/i.test(v.lang)).sort((a, b) => score(b) - score(a));
   }
   function pickVoice() {
@@ -35,36 +47,51 @@
     const saved = store.get('rep_voice');
     voice = (saved && vs.find(v => v.name === saved)) || vs[0] || null;
   }
-  if (canSay) { pickVoice(); try { speechSynthesis.addEventListener('voiceschanged', pickVoice); } catch (e) {} }
+  if (canSpeech) { pickVoice(); try { speechSynthesis.addEventListener('voiceschanged', pickVoice); } catch (e) {} }
   function setVoice(name) { store.set('rep_voice', name); pickVoice(); }
 
-  let last = { text: '', at: 0 }, queueId = 0;
-  function say(text, opts) {
-    if (!canSay || !text) return;
+  let last = { text: '', at: 0 }, queueId = 0, playing = null;
+  function stopAll() {
+    if (playing) { try { playing.pause(); } catch (e) {} playing = null; }
+    if (canSpeech) speechSynthesis.cancel();
+  }
+  function speakSynth(part, slow, done) {
+    if (!canSpeech) return done();
     if (!voice) pickVoice();
+    // одиночную «I» голоса Apple читают как «capital I» — подставляем «eye», это то же звучание [ай]
+    const u = new SpeechSynthesisUtterance(/^I[.!?]?$/.test(part) ? 'eye' : part);
+    u.lang = voice ? voice.lang : 'en-US';
+    if (voice) u.voice = voice;
+    u.rate = slow ? 0.5 : part.split(/\s+/).length <= 2 ? 0.68 : 0.78;
+    u.pitch = 1;
+    u.onend = done; u.onerror = done;
+    setTimeout(done, 1500 + part.length * (slow ? 220 : 140));   // если браузер не сообщил о конце
+    speechSynthesis.speak(u);
+  }
+  function playFile(part, slow, done) {
+    const a = new Audio('audio/' + audioId(part) + (slow ? '-s' : '') + '.m4a');
+    playing = a;
+    a.onended = done;
+    a.onerror = () => speakSynth(part, slow, done);       // файла нет — говорим синтезом
+    const p = a.play();
+    if (p && p.catch) p.catch(() => speakSynth(part, slow, done));
+  }
+  function say(text, opts) {
+    if (!text) return;
     const clean = String(text).replace(/[«»"]/g, '').trim();
     const n = Date.now();
     // нажал ещё раз то же слово — скажем совсем медленно (и дальше чередуем)
     const slow = (opts && opts.slow) || (last.text === clean && n - last.at < 4000 && !last.slow);
     last = { text: clean, at: n, slow };
-    // «your / yours», «I → me», «my cat — The cat is mine» — по частям с паузой
-    const parts = clean.split(/\s*(?:\/|→|—|–|·)\s*/).filter(Boolean);
+    const parts = splitParts(clean);
     const id = ++queueId;
-    speechSynthesis.cancel();
+    stopAll();
     const next = i => {
       if (id !== queueId || i >= parts.length) return;
-      const words = parts[i].split(/\s+/).length;
-      // одиночную «I» голоса Apple читают как «capital I» — подставляем «eye», это то же звучание [ай]
-      const u = new SpeechSynthesisUtterance(/^I[.!?]?$/.test(parts[i]) ? 'eye' : parts[i]);
-      u.lang = voice ? voice.lang : 'en-US';
-      if (voice) u.voice = voice;
-      u.rate = slow ? 0.5 : words <= 2 ? 0.68 : 0.78;
-      u.pitch = 1;
-      let done = false;
-      const go = () => { if (done) return; done = true; setTimeout(() => next(i + 1), 550); };
-      u.onend = go; u.onerror = go;
-      setTimeout(go, 1500 + parts[i].length * (slow ? 220 : 140));   // если браузер не сообщил о конце
-      speechSynthesis.speak(u);
+      let fired = false;
+      const done = () => { if (fired) return; fired = true; setTimeout(() => next(i + 1), 550); };
+      if (recorded.has(audioId(parts[i]))) playFile(parts[i], slow, done);
+      else speakSynth(parts[i], slow, done);
     };
     next(0);
   }
@@ -372,5 +399,5 @@
     return null;
   }
 
-  window.EN = { html, mount, itemEls, whyHost, say, canSay, voices, setVoice, currentVoice: () => voice, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
+  window.EN = { html, mount, itemEls, whyHost, say, canSay, canSpeech, voices, setVoice, currentVoice: () => voice, audioId, hasRecorded: () => recorded.size > 0, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
 })();
