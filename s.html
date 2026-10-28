@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Домашка</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="student" id="app">
+  <div class="empty-state"><h1>Загружаю…</h1><p class="muted">Если долго — проверь, что включён VPN.</p></div>
+</main>
+<div class="netline hide" id="net">Нет связи. Проверь интернет и VPN — ответы сохранятся, когда связь вернётся.</div>
+
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-database-compat.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  const { db, now, TS, esc, sortedTasks } = REP;
+  const app = document.getElementById('app');
+  const room = new URLSearchParams(location.hash.slice(1)).get('k');
+
+  if (!room || room.length < 16) {
+    app.innerHTML = '<div class="empty-state"><h1>Нужна ссылка от учителя</h1><p class="muted">Открой страницу по ссылке, которую прислал Виталий.</p></div>';
+    return;
+  }
+
+  const R = db.ref('rooms/' + room);
+  let lessonId = null, lesson = null, tasks = [], answers = {}, marks = {};
+  let focusTask = null;
+  const lastInput = {};           // taskId -> время последнего ввода (для подсчёта активного времени)
+
+  /* ---------- присутствие ---------- */
+  const pres = R.child('presence');
+  function presence(extra) {
+    pres.update(Object.assign({
+      online: true,
+      visible: !document.hidden,
+      focus: document.hasFocus(),
+      lesson: lessonId || '',
+      task: focusTask || '',
+      t: TS
+    }, extra || {})).catch(() => {});
+  }
+  db.ref('.info/connected').on('value', s => {
+    const on = !!s.val();
+    document.getElementById('net').classList.toggle('hide', on);
+    if (on) { pres.onDisconnect().update({ online: false, t: TS }); presence(); }
+  });
+  document.addEventListener('visibilitychange', () => presence());
+  window.addEventListener('focus', () => presence());
+  window.addEventListener('blur', () => presence());
+  setInterval(() => presence(), 30000);
+
+  /* ---------- текущее занятие ---------- */
+  R.child('current').on('value', s => {
+    const id = s.val();
+    if (id === lessonId) return;
+    if (lessonId) {
+      R.child('lessons/' + lessonId).off();
+      R.child('marks/' + lessonId).off();
+    }
+    lessonId = id; lesson = null; marks = {}; answers = {};
+    if (!id) { renderEmpty(); presence(); return; }
+    R.child('answers/' + id).once('value').then(a => {
+      if (lessonId !== id) return;
+      answers = a.val() || {};
+      R.child('lessons/' + id).on('value', l => { lesson = l.val(); build(); });
+      R.child('marks/' + id).on('value', m => { marks = m.val() || {}; paintMarks(); });
+    });
+    presence();
+  }, err => {
+    app.innerHTML = '<div class="empty-state"><h1>Ссылка не работает</h1><p class="muted">Попроси у Виталия новую ссылку.</p></div>';
+  });
+
+  function renderEmpty() {
+    app.innerHTML = '<div class="empty-state"><h1>Заданий пока нет</h1><p class="muted">Как только учитель добавит домашку, она появится здесь сама.</p></div>';
+  }
+
+  /* ---------- сборка страницы ---------- */
+  function build() {
+    if (!lesson) { renderEmpty(); return; }
+    tasks = sortedTasks(lesson);
+    const active = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.key;
+
+    let html = '<header class="s-head"><h1>' + esc(lesson.title || 'Домашка') + '</h1><div class="dots" id="dots" aria-label="Прогресс"></div></header>';
+    html += '<div class="banner hide" id="done">Всё верно! Теперь аккуратно перепиши в тетрадь ✍️</div>';
+    tasks.forEach((t, i) => {
+      html += '<section class="sheet" data-task="' + t.id + '">'
+        + '<div class="margin">' + (i + 1) + '</div>'
+        + (t.subject ? '<span class="subject">' + esc(t.subject) + '</span>' : '')
+        + '<h2 class="task-title">' + esc(t.title || ('Задание ' + (i + 1))) + '</h2>'
+        + (t.type !== 'letters' && t.text ? '<p class="task-text">' + esc(t.text) + '</p>' : '')
+        + (t.type === 'letters' && t.note ? '<p class="task-text">' + esc(t.note) + '</p>' : '')
+        + (t.hint ? '<button class="btn light small hint-btn" data-hint="' + t.id + '">Подсказка</button><div class="hint hide" id="hint-' + t.id + '">' + esc(t.hint) + '</div>' : '')
+        + field(t)
+        + '<div class="mark hide" id="mark-' + t.id + '"></div>'
+        + '</section>';
+    });
+    app.innerHTML = html;
+
+    app.querySelectorAll('[data-key]').forEach(el => {
+      el.addEventListener('input', onInput);
+      el.addEventListener('focus', () => { focusTask = el.closest('[data-task]').dataset.task; presence(); });
+    });
+    app.querySelectorAll('.gap').forEach(el => el.addEventListener('keydown', gapKeys));
+    app.querySelectorAll('[data-hint]').forEach(b => b.addEventListener('click', () => {
+      document.getElementById('hint-' + b.dataset.hint).classList.remove('hide');
+      b.remove();
+      R.child('answers/' + lessonId + '/' + b.dataset.hint).update({ hint: true });
+    }));
+    // открытые раньше подсказки
+    tasks.forEach(t => {
+      if (answers[t.id] && answers[t.id].hint) {
+        const h = document.getElementById('hint-' + t.id);
+        if (h) { h.classList.remove('hide'); const b = app.querySelector('[data-hint="' + t.id + '"]'); b && b.remove(); }
+      }
+    });
+    if (active) { const el = app.querySelector('[data-key="' + active + '"]'); el && el.focus(); }
+    paintMarks();
+  }
+
+  function field(t) {
+    const a = answers[t.id] || {};
+    if (t.type === 'short' && Array.isArray(t.items)) {
+      return '<div class="items">' + t.items.map((it, i) =>
+        '<label class="item"><span class="q">' + esc(it.q) + '</span>'
+        + '<input class="answer-in" data-key="' + t.id + ':' + i + '" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc((a.parts || [])[i] || '') + '"></label>'
+      ).join('') + '</div>';
+    }
+    if (t.type === 'letters') {
+      let n = 0;
+      const parts = a.parts || [];
+      const html = esc(t.text || '').replace(/_/g, () => {
+        const i = n++;
+        return '<input class="gap" maxlength="2" data-key="' + t.id + ':' + i + '" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Пропуск ' + (i + 1) + '" value="' + esc(parts[i] || '') + '">';
+      });
+      return '<div class="letters">' + html + '</div>';
+    }
+    if (t.type === 'steps') {
+      return '<textarea class="answer-in" data-key="' + t.id + '" spellcheck="false" placeholder="Пиши решение по шагам…">' + esc(a.text || '') + '</textarea>';
+    }
+    return '<input class="answer-in" data-key="' + t.id + '" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Ответ" value="' + esc(a.text || '') + '">';
+  }
+
+  // в пропусках: после буквы — к следующему пропуску, Backspace в пустом — к предыдущему
+  function gapKeys(e) {
+    const gaps = Array.from(app.querySelectorAll('.gap:not([readonly])'));
+    const i = gaps.indexOf(e.target);
+    if (e.key === 'Backspace' && !e.target.value && i > 0) { e.preventDefault(); gaps[i - 1].focus(); }
+  }
+
+  /* ---------- запись ответа ---------- */
+  function onInput(e) {
+    const el = e.target;
+    const [taskId] = el.dataset.key.split(':');
+    const t = tasks.find(x => x.id === taskId);
+    if (!t) return;
+    const a = answers[taskId] = answers[taskId] || {};
+
+    if (t.type === 'letters') {
+      if (el.value.length > 1) el.value = el.value.slice(-1);
+      const gaps = Array.from(el.closest('.letters').querySelectorAll('.gap'));
+      a.parts = gaps.map(g => g.value.trim());
+      let n = 0;
+      a.text = (t.text || '').replace(/_/g, () => a.parts[n++] || '_');
+      if (el.value) {
+        const all = Array.from(app.querySelectorAll('.gap:not([readonly])'));
+        const nx = all[all.indexOf(el) + 1];
+        if (nx && nx.closest('[data-task]') === el.closest('[data-task]')) nx.focus();
+      }
+    } else if (t.type === 'short' && Array.isArray(t.items)) {
+      const ins = Array.from(el.closest('.items').querySelectorAll('[data-key]'));
+      a.parts = ins.map(x => x.value);
+      a.text = t.items.map((it, i) => it.q + ' ' + (a.parts[i] || '')).join('\n');
+    } else {
+      a.text = el.value;
+    }
+
+    const n = now();
+    if (!a.start) a.start = n;
+    const prev = lastInput[taskId];
+    if (prev && n - prev < 60000) a.active = (a.active || 0) + (n - prev);
+    lastInput[taskId] = n;
+
+    focusTask = taskId;
+    const upd = { text: a.text, t: TS, start: a.start, active: a.active || 0 };
+    if (a.parts) upd.parts = a.parts;
+    R.child('answers/' + lessonId + '/' + taskId).update(upd);
+    paintDots();
+  }
+
+  /* ---------- пометки учителя ---------- */
+  function paintMarks() {
+    if (!lesson) return;
+    tasks.forEach(t => {
+      const box = document.getElementById('mark-' + t.id);
+      if (!box) return;
+      const m = marks[t.id];
+      const sec = box.closest('.sheet');
+      sec.querySelectorAll('[data-key]').forEach(el => { el.readOnly = !!(m && m.s === 'ok'); });
+      if (!m) { box.className = 'mark hide'; box.innerHTML = ''; return; }
+      box.className = 'mark ' + (m.s === 'ok' ? 'ok' : 'fix');
+      box.innerHTML = m.s === 'ok'
+        ? '<span class="sign">✓</span><span>Верно' + (m.c ? ' — ' + esc(m.c) : '') + '</span>'
+        : '<span class="sign">✗</span><span>Исправь' + (m.c ? ': ' + esc(m.c) : '') + '</span>';
+    });
+    paintDots();
+    const done = tasks.length && tasks.every(t => marks[t.id] && marks[t.id].s === 'ok');
+    const b = document.getElementById('done');
+    if (b) b.classList.toggle('hide', !done);
+  }
+
+  function paintDots() {
+    const d = document.getElementById('dots');
+    if (!d) return;
+    d.innerHTML = tasks.map((t, i) => {
+      const m = marks[t.id];
+      const a = answers[t.id];
+      const cls = m ? (m.s === 'ok' ? 'ok' : 'fix') : (a && a.text && a.text.replace(/_/g, '').trim() ? 'typed' : '');
+      return '<i class="' + cls + '" title="Задание ' + (i + 1) + '"></i>';
+    }).join('');
+  }
+})();
+</script>
+</body>
+</html>

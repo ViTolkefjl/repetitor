@@ -1,0 +1,37 @@
+{
+  "rules": {
+    "owner": {
+      ".read": "auth != null",
+      ".write": "auth != null && !data.exists() && newData.val() === auth.uid"
+    },
+    "teacher": {
+      ".read": "auth != null && auth.uid === root.child('owner').val()",
+      ".write": "auth != null && auth.uid === root.child('owner').val()"
+    },
+    "keys": {
+      ".read": "auth != null && auth.uid === root.child('owner').val()",
+      ".write": "auth != null && auth.uid === root.child('owner').val()"
+    },
+    "rooms": {
+      "$room": {
+        ".read": "$room.length >= 16",
+        "meta":    { ".write": "auth != null && auth.uid === root.child('owner').val()" },
+        "current": { ".write": "auth != null && auth.uid === root.child('owner').val()" },
+        "lessons": { ".write": "auth != null && auth.uid === root.child('owner').val()" },
+        "marks":   { ".write": "auth != null && auth.uid === root.child('owner').val()" },
+        "answers": {
+          ".write": "auth != null && auth.uid === root.child('owner').val()",
+          "$lesson": {
+            "$task": {
+              ".write": "root.child('rooms').child($room).child('lessons').child($lesson).child('tasks').child($task).exists()",
+              "text": { ".validate": "newData.isString() && newData.val().length < 5000" }
+            }
+          }
+        },
+        "presence": {
+          ".write": "root.child('rooms').child($room).child('meta').exists()"
+        }
+      }
+    }
+  }
+}

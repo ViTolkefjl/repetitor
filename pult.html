@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Пульт учителя</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- вход -->
+<section class="login hide" id="login">
+  <h1>Пульт учителя</h1>
+  <p class="muted">Войди своим Google-аккаунтом. Включи VPN, если страница не отвечает.</p>
+  <button class="btn" id="signin">Войти через Google</button>
+  <div class="err" id="loginErr"></div>
+</section>
+
+<!-- пульт -->
+<div class="pult hide" id="pult">
+  <header class="p-top">
+    <div class="status" id="status"><i class="lamp"></i><div><span id="stText">—</span><small id="stSub"></small></div></div>
+    <div class="meter">Занятие <b id="mTotal">—</b></div>
+    <div class="meter">Активно <b id="mActive">—</b></div>
+    <div class="meter">Верно <b id="mDone">—</b></div>
+    <div class="spacer"></div>
+    <button class="btn light small" id="linkBtn">Ссылка для брата</button>
+    <button class="btn plain small" id="backupBtn">Резервная копия</button>
+    <button class="btn plain small" id="signout">Выйти</button>
+  </header>
+
+  <div class="panel hide" id="linkPanel">
+    <h3>Ссылка для брата</h3>
+    <p class="muted" style="margin:0">Отправь её брату и сохрани у него в закладках. Входить никуда не нужно.</p>
+    <div class="linkbox" id="linkText"></div>
+    <button class="btn small" id="copyLink">Скопировать</button>
+  </div>
+
+  <div class="p-bar">
+    <select id="lessonSel" aria-label="Занятие"></select>
+    <button class="btn small" id="newBtn">Новое занятие</button>
+  </div>
+
+  <div class="panel hide" id="newPanel">
+    <h3>Новое занятие</h3>
+    <label for="importText">Вставь блок, который подготовил Claude</label>
+    <textarea id="importText" placeholder='{ "title": "Домашка на 29 октября", "tasks": [ … ] }'></textarea>
+    <div class="p-bar" style="margin:12px 0 0">
+      <button class="btn" id="importBtn">Создать занятие</button>
+      <span class="muted">или</span>
+      <input id="emptyTitle" placeholder="Название пустого занятия" style="flex:1 1 200px;width:auto">
+      <button class="btn light" id="emptyBtn">Создать пустое</button>
+    </div>
+    <div class="err" id="importErr"></div>
+  </div>
+
+  <div id="lessonView"></div>
+</div>
+
+<div class="toast hide" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-database-compat.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  const { db, now, TS, esc, check, dur, clock, randomKey, sortedTasks, lettersFromKey } = REP;
+  const $ = id => document.getElementById(id);
+  const auth = firebase.auth();
+
+  let room = null, R = null;
+  let lessons = {}, currentId = null, viewId = null;
+  let answers = {}, marks = {}, keys = {}, presence = {}, curAnswers = {};
+  let showKey = {};
+  let viewUnsubs = [], curUnsub = null;
+  // подписка, которую можно снять точечно (ref.off() без колбэка снял бы и чужие подписки на тот же путь)
+  function listen(ref, cb) {
+    const h = ref.on('value', cb, fail);
+    return () => ref.off('value', h);
+  }
+
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.remove('hide');
+    clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('hide'), 2200);
+  }
+  function fail(e) {
+    console.error(e);
+    const m = String(e && (e.code || e.message) || e);
+    toast(/permission/i.test(m) ? 'Нет доступа к базе — проверь правила Firebase' : 'Ошибка: ' + m);
+  }
+
+  /* ---------- вход ---------- */
+  const AUTH_ERR = {
+    'auth/unauthorized-domain': 'Firebase не знает этот сайт. Добавь vitolkefjl.github.io: Authentication → Settings → Authorized domains.',
+    'auth/operation-not-allowed': 'Вход через Google выключен. Включи: Authentication → Sign-in method → Google.',
+    'auth/configuration-not-found': 'Вход через Google ещё не настроен. Открой Authentication → Get started → Google.',
+    'auth/popup-blocked': 'Браузер заблокировал окно входа. Разреши всплывающие окна для этого сайта.',
+    'auth/network-request-failed': 'Нет связи с Google. Включи VPN и попробуй ещё раз.'
+  };
+  $('signin').onclick = () => {
+    $('loginErr').textContent = '';
+    auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(e => {
+      if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+      $('loginErr').textContent = AUTH_ERR[e.code] || ('Не получилось войти: ' + (e.code || e.message));
+    });
+  };
+  $('signout').onclick = () => auth.signOut().then(() => location.reload());
+
+  auth.onAuthStateChanged(user => {
+    if (!user) { $('pult').classList.add('hide'); $('login').classList.remove('hide'); return; }
+    start(user).catch(e => {
+      $('login').classList.remove('hide'); $('pult').classList.add('hide');
+      $('signin').classList.add('hide');
+      $('loginErr').innerHTML = esc(e.message || e) + '<br><button class="btn light small" style="margin-top:10px" onclick="firebase.auth().signOut().then(()=>location.reload())">Выйти</button>';
+    });
+  });
+
+  async function start(user) {
+    const ownerRef = db.ref('owner');
+    let owner = (await ownerRef.once('value')).val();
+    if (!owner) { await ownerRef.set(user.uid); owner = user.uid; }
+    if (owner !== user.uid) throw new Error('Этот пульт уже привязан к другому Google-аккаунту (' + (user.email || '') + ' — не тот).');
+
+    room = (await db.ref('teacher/room').once('value')).val();
+    if (!room) {
+      room = randomKey(24);
+      await db.ref().update({ ['rooms/' + room + '/meta']: { created: TS }, 'teacher/room': room });
+    }
+    R = db.ref('rooms/' + room);
+    $('login').classList.add('hide'); $('pult').classList.remove('hide');
+
+    const link = location.href.replace(/[^/]*([?#].*)?$/, '') + 's.html#k=' + room;
+    $('linkText').textContent = link;
+    $('copyLink').onclick = () => {
+      (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject())
+        .then(() => toast('Ссылка скопирована')).catch(() => prompt('Скопируй ссылку:', link));
+    };
+
+    R.child('lessons').on('value', s => { lessons = s.val() || {}; fillSelect(); if (viewId && !lessons[viewId]) setView(currentId); else renderLesson(); }, fail);
+    R.child('current').on('value', s => {
+      currentId = s.val();
+      if (!viewId || !lessons[viewId]) setView(currentId); else { fillSelect(); renderLesson(); }
+      if (curUnsub) curUnsub();
+      curUnsub = null; curAnswers = {};
+      if (currentId) curUnsub = listen(R.child('answers/' + currentId), a => { curAnswers = a.val() || {}; paintTop(); });
+    }, fail);
+    R.child('presence').on('value', s => { presence = s.val() || {}; paintTop(); paintRows(); });
+    setInterval(() => { paintTop(); paintRows(); }, 1000);
+  }
+
+  /* ---------- выбор занятия ---------- */
+  const lessonList = () => Object.entries(lessons).sort((a, b) => (b[1].created || 0) - (a[1].created || 0));
+  function fillSelect() {
+    const sel = $('lessonSel');
+    const list = lessonList();
+    sel.innerHTML = list.length
+      ? list.map(([id, l]) => {
+          const d = l.created ? new Date(l.created) : null;
+          const date = d ? String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') : '';
+          return '<option value="' + id + '">' + esc(date + '  ' + (l.title || 'Занятие')) + (id === currentId ? '  — у брата' : '') + '</option>';
+        }).join('')
+      : '<option value="">Занятий пока нет</option>';
+    sel.value = viewId || '';
+  }
+  $('lessonSel').onchange = e => setView(e.target.value || null);
+
+  function setView(id) {
+    viewUnsubs.forEach(f => f()); viewUnsubs = [];
+    viewId = id || null; answers = {}; marks = {}; keys = {}; showKey = {};
+    fillSelect(); renderLesson();
+    if (!viewId) return;
+    viewUnsubs = [
+      listen(R.child('answers/' + viewId), s => { answers = s.val() || {}; paintRows(); }),
+      listen(R.child('marks/' + viewId), s => { marks = s.val() || {}; paintRows(); paintTop(); }),
+      listen(db.ref('keys/' + room + '/' + viewId), s => { keys = s.val() || {}; paintRows(); })
+    ];
+  }
+
+  /* ---------- новое занятие ---------- */
+  $('newBtn').onclick = () => $('newPanel').classList.toggle('hide');
+  $('linkBtn').onclick = () => $('linkPanel').classList.toggle('hide');
+
+  function parseImport(raw) {
+    const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+    if (a < 0 || b < a) throw new Error('Не вижу блока в фигурных скобках { … }. Скопируй ответ Claude целиком.');
+    let data;
+    try { data = JSON.parse(raw.slice(a, b + 1)); }
+    catch (e) { throw new Error('Блок повреждён (' + e.message + '). Попроси Claude прислать его заново.'); }
+    if (!Array.isArray(data.tasks) || !data.tasks.length) throw new Error('В блоке нет заданий (tasks).');
+    return data;
+  }
+
+  // Превращает задание из импорта в {task, key}
+  function makeTask(src, n) {
+    const type = ['short', 'steps', 'letters'].includes(src.type) ? src.type : 'short';
+    const task = { n, type, subject: src.subject || '', title: src.title || '', text: src.text || '', hint: src.hint || '' };
+    let key = src.answer != null ? String(src.answer) : '';
+    if (type === 'short' && Array.isArray(src.items) && src.items.length) {
+      task.items = src.items.map(it => ({ q: String(it.q || '') }));
+      key = src.items.map(it => it.a != null ? String(it.a) : '');
+    }
+    if (type === 'letters') {
+      task.note = src.text || '';
+      task.text = src.template || src.text || '';
+      if (!/_/.test(task.text)) throw new Error('В задании «' + (src.title || n) + '» нет пропусков «_».');
+    }
+    Object.keys(task).forEach(k => { if (task[k] === '') delete task[k]; });
+    return { task, key };
+  }
+
+  async function createLesson(title, srcTasks) {
+    const id = R.child('lessons').push().key;
+    const tasks = {}, k = {};
+    srcTasks.forEach((s, i) => {
+      const { task, key } = makeTask(s, i + 1);
+      const tid = 't' + (i + 1);
+      tasks[tid] = task;
+      if (key !== '' && !(Array.isArray(key) && key.every(x => x === ''))) k[tid] = key;
+    });
+    await db.ref().update({
+      ['rooms/' + room + '/lessons/' + id]: { title: title || 'Домашка', created: TS, tasks },
+      ['keys/' + room + '/' + id]: Object.keys(k).length ? k : null,
+      ['rooms/' + room + '/current']: id
+    });
+    setView(id);
+    $('newPanel').classList.add('hide');
+    toast('Занятие создано и уже открыто у брата');
+  }
+
+  $('importBtn').onclick = () => {
+    $('importErr').textContent = '';
+    try {
+      const d = parseImport($('importText').value);
+      d.tasks.forEach((t, i) => makeTask(t, i + 1)); // проверка до записи
+      createLesson(d.title, d.tasks).then(() => { $('importText').value = ''; }).catch(fail);
+    } catch (e) { $('importErr').textContent = e.message; }
+  };
+  $('emptyBtn').onclick = () => {
+    $('importErr').textContent = '';
+    createLesson($('emptyTitle').value.trim() || 'Домашка', []).then(() => { $('emptyTitle').value = ''; }).catch(fail);
+  };
+
+  /* ---------- экран занятия ---------- */
+  function renderLesson() {
+    const v = $('lessonView');
+    const l = viewId && lessons[viewId];
+    if (!l) {
+      v.innerHTML = '<div class="panel"><h3>Создай первое занятие</h3><p class="muted" style="margin:0">Пришли Claude фото дневника и страниц учебника — он подготовит блок заданий. Вставь его через «Новое занятие».</p></div>';
+      return;
+    }
+    const tasks = sortedTasks(l);
+    let html = '<div class="p-bar"><h2>' + esc(l.title || 'Занятие') + '</h2>'
+      + (viewId === currentId ? '<span class="tag">открыто у брата</span>' : '<button class="btn light small" id="makeCur">Открыть у брата</button>')
+      + '<button class="btn plain small" id="delLesson">Удалить</button></div>';
+    if (!tasks.length) html += '<p class="muted">Заданий пока нет — добавь их ниже.</p>';
+    tasks.forEach((t, i) => {
+      html += '<section class="sheet row" id="row-' + t.id + '"><div class="margin">' + (i + 1) + '</div><div class="row-grid">'
+        + '<div>' + (t.subject ? '<span class="subject">' + esc(t.subject) + '</span>' : '')
+        + '<h3 class="task-title">' + esc(t.title || 'Задание ' + (i + 1)) + '</h3>'
+        + '<p class="task-text">' + esc(t.type === 'letters' ? [t.note, t.text].filter(Boolean).join('\n') : (t.text || '')) + '</p>'
+        + '<button class="btn plain small" data-del="' + t.id + '">Убрать задание</button></div>'
+        + '<div><div class="live" id="live-' + t.id + '"></div><div class="chips" id="chips-' + t.id + '"></div>'
+        + '<div class="mark hide" id="mark-' + t.id + '"></div>'
+        + '<div class="actions"><input id="cmt-' + t.id + '" placeholder="Комментарий">'
+        + '<button class="btn ok small" data-mark="ok" data-t="' + t.id + '">✓ Верно</button>'
+        + '<button class="btn fix small" data-mark="fix" data-t="' + t.id + '">✗ Исправь</button>'
+        + '<button class="btn plain small hide" data-unmark="' + t.id + '">Снять</button></div>'
+        + '</div></div></section>';
+    });
+    html += addForm();
+    v.innerHTML = html;
+
+    const mc = $('makeCur');
+    if (mc) mc.onclick = () => R.child('current').set(viewId).then(() => toast('Брат видит это занятие')).catch(fail);
+    $('delLesson').onclick = () => {
+      if (!confirm('Удалить занятие «' + (l.title || '') + '» вместе с ответами?')) return;
+      const id = viewId;
+      db.ref().update({
+        ['rooms/' + room + '/lessons/' + id]: null, ['rooms/' + room + '/answers/' + id]: null,
+        ['rooms/' + room + '/marks/' + id]: null, ['keys/' + room + '/' + id]: null,
+        ...(id === currentId ? { ['rooms/' + room + '/current']: null } : {})
+      }).then(() => setView(currentId !== id ? currentId : null)).catch(fail);
+    };
+    v.querySelectorAll('[data-mark]').forEach(b => b.onclick = () => {
+      const id = b.dataset.t, c = $('cmt-' + id);
+      R.child('marks/' + viewId + '/' + id).set({ s: b.dataset.mark, c: c.value.trim(), t: TS }).catch(fail);
+      c.value = '';
+    });
+    v.querySelectorAll('[data-unmark]').forEach(b => b.onclick = () => R.child('marks/' + viewId + '/' + b.dataset.unmark).remove().catch(fail));
+    v.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+      if (!confirm('Убрать это задание?')) return;
+      const id = b.dataset.del;
+      db.ref().update({
+        ['rooms/' + room + '/lessons/' + viewId + '/tasks/' + id]: null,
+        ['rooms/' + room + '/answers/' + viewId + '/' + id]: null,
+        ['rooms/' + room + '/marks/' + viewId + '/' + id]: null,
+        ['keys/' + room + '/' + viewId + '/' + id]: null
+      }).catch(fail);
+    });
+    v.querySelectorAll('.chips').forEach(c => c.addEventListener('click', e => {
+      const k = e.target.closest('[data-key]');
+      if (k) { showKey[k.dataset.key] = !showKey[k.dataset.key]; paintRows(); }
+    }));
+    bindAddForm();
+    paintRows();
+  }
+
+  /* ---------- живые ответы ---------- */
+  function liveHtml(t, a, res) {
+    if (!a || !(a.text || (a.parts && a.parts.length))) return '<span class="ph">пусто</span>';
+    const cls = s => s === 'miss' ? 'bad' : s === 'match' ? 'good' : '';
+    if (t.type === 'letters') {
+      let n = 0;
+      return esc(t.text || '').replace(/_/g, () => {
+        const i = n++, L = (a.parts || [])[i];
+        if (!L) return '<span class="ph">_</span>';
+        return '<span class="' + cls(res.parts && res.parts[i]) + '">' + esc(L) + '</span>';
+      });
+    }
+    if (t.type === 'short' && Array.isArray(t.items)) {
+      return '<div class="live-items">' + t.items.map((it, i) => {
+        const v = (a.parts || [])[i];
+        return '<div><span class="q">' + esc(it.q) + '</span>'
+          + (v ? '<span class="' + cls(res.parts && res.parts[i]) + '">' + esc(v) + '</span>' : '<span class="ph">…</span>') + '</div>';
+      }).join('') + '</div>';
+    }
+    return esc(a.text);
+  }
+
+  function keyText(t, k) {
+    if (Array.isArray(k)) return (t.items || []).map((it, i) => it.q + ' ' + (k[i] || '?')).join('; ');
+    return String(k);
+  }
+
+  function paintRows() {
+    const l = viewId && lessons[viewId];
+    if (!l) return;
+    const n = now();
+    sortedTasks(l).forEach(t => {
+      const row = $('row-' + t.id);
+      if (!row) return;
+      const a = answers[t.id], k = keys[t.id], m = marks[t.id];
+      const res = check(t, k, a);
+      $('live-' + t.id).innerHTML = liveHtml(t, a, res);
+
+      const chips = [];
+      if (res.state === 'match') chips.push('<span class="chip match">совпало с ключом</span>');
+      if (res.state === 'miss') chips.push('<span class="chip miss">не совпало с ключом</span>');
+      if (k != null) chips.push('<span class="chip key" data-key="' + t.id + '">' + (showKey[t.id] ? 'ключ: ' + esc(keyText(t, k)) : 'показать ключ') + '</span>');
+      else chips.push('<span class="chip">ключа нет</span>');
+      if (a && a.active >= 1000) chips.push('<span class="chip">активно ' + dur(a.active) + '</span>');
+      if (a && a.start) chips.push('<span class="chip">начал в ' + clock(a.start) + '</span>');
+      if (a && a.hint) chips.push('<span class="chip warn">открыл подсказку</span>');
+      if (m && a && a.t > m.t) chips.push('<span class="chip warn">изменил после отметки</span>');
+      $('chips-' + t.id).innerHTML = chips.join('');
+
+      const mk = $('mark-' + t.id);
+      if (m) {
+        mk.className = 'mark ' + (m.s === 'ok' ? 'ok' : 'fix');
+        mk.textContent = (m.s === 'ok' ? '✓ Верно' : '✗ Исправь') + (m.c ? ': ' + m.c : '');
+      } else { mk.className = 'mark hide'; mk.textContent = ''; }
+      const un = row.querySelector('[data-unmark]');
+      un && un.classList.toggle('hide', !m);
+
+      const typing = viewId === currentId && presence.online && presence.task === t.id && a && n - (a.t || 0) < 5000;
+      row.classList.toggle('typing-now', !!typing);
+    });
+  }
+
+  /* ---------- статус ученика ---------- */
+  function paintTop() {
+    const st = $('status'), n = now(), p = presence || {};
+    let lastT = 0, first = 0, active = 0;
+    Object.values(curAnswers).forEach(a => {
+      if (a.t > lastT) lastT = a.t;
+      if (a.start && (!first || a.start < first)) first = a.start;
+      active += a.active || 0;
+    });
+    let cls, txt, sub = '';
+    if (!currentId) { cls = ''; txt = 'Нет открытого занятия'; }
+    else if (!p.online) { cls = 'bad'; txt = 'Не на странице'; sub = p.t ? 'вышел в ' + clock(p.t) : 'ещё не заходил'; }
+    else if (p.visible === false || p.focus === false) { cls = 'bad'; txt = 'Ушёл в другое окно'; sub = p.t ? 'уже ' + dur(n - p.t) : ''; }
+    else if (!lastT) { cls = 'warn'; txt = 'Открыл страницу'; sub = 'пока ничего не написал'; }
+    else {
+      const idle = n - lastT;
+      const num = taskNum(p.task);
+      if (idle < 5000) { cls = 'ok'; txt = 'Печатает'; sub = num ? 'задание ' + num : ''; }
+      else if (idle < 120000) { cls = 'warn'; txt = 'Думает'; sub = dur(idle) + ' без ввода'; }
+      else { cls = idle < 300000 ? 'warn' : 'bad'; txt = 'Бездействует'; sub = dur(idle) + ' без ввода'; }
+    }
+    st.className = 'status ' + cls;
+    $('stText').textContent = txt; $('stSub').textContent = sub;
+
+    const end = p.online ? n : lastT;
+    $('mTotal').textContent = first ? dur(end - first) : '—';
+    $('mActive').textContent = active ? dur(active) : '—';
+    const l = currentId && lessons[currentId];
+    if (l) {
+      const ts = sortedTasks(l);
+      const ok = viewId === currentId ? ts.filter(t => marks[t.id] && marks[t.id].s === 'ok').length : null;
+      $('mDone').textContent = ok == null ? '—' : ok + ' из ' + ts.length;
+    } else $('mDone').textContent = '—';
+  }
+  function taskNum(id) {
+    const l = currentId && lessons[currentId];
+    if (!l || !id) return 0;
+    return sortedTasks(l).findIndex(t => t.id === id) + 1;
+  }
+
+  /* ---------- ручное добавление задания ---------- */
+  function addForm() {
+    return '<div class="panel" id="addPanel"><h3>Добавить задание</h3><div class="form-grid">'
+      + '<div><label for="fType">Тип ответа</label><select id="fType">'
+      + '<option value="short">Короткий ответ</option><option value="items">Несколько коротких ответов</option>'
+      + '<option value="steps">Ход решения</option><option value="letters">Вставь букву</option></select></div>'
+      + '<div><label for="fSubject">Предмет</label><input id="fSubject" placeholder="Математика"></div>'
+      + '<div><label for="fTitle">Название</label><input id="fTitle" placeholder="№ 245, стр. 61"></div>'
+      + '<div><label for="fHint">Подсказка</label><input id="fHint" placeholder="необязательно"></div></div>'
+      + '<label for="fText" id="fTextL">Текст задания</label><textarea id="fText" style="min-height:80px;font-family:inherit;font-size:16px"></textarea>'
+      + '<div id="fTplBox" class="hide"><label for="fTpl">Слова с пропусками — каждый пропуск «_»</label><input id="fTpl" placeholder="к_рова, м_локо"></div>'
+      + '<div id="fItemsBox" class="hide"><label for="fItems">Пункты — каждый с новой строки: вопрос | ответ</label><textarea id="fItems" placeholder="36 : 4 = | 9\n7 · 8 = | 56" style="font-family:inherit;font-size:16px"></textarea></div>'
+      + '<div id="fAnsBox"><label for="fAns" id="fAnsL">Правильный ответ (ученик не видит)</label><input id="fAns"></div>'
+      + '<button class="btn" id="fAdd" style="margin-top:12px">Добавить</button><div class="err" id="fErr"></div></div>';
+  }
+  function bindAddForm() {
+    const type = $('fType');
+    const sync = () => {
+      const v = type.value;
+      $('fTplBox').classList.toggle('hide', v !== 'letters');
+      $('fItemsBox').classList.toggle('hide', v !== 'items');
+      $('fAnsBox').classList.toggle('hide', v === 'items');
+      $('fAnsL').textContent = v === 'letters' ? 'Те же слова целиком, правильно (ученик не видит)'
+        : v === 'steps' ? 'Итоговый ответ (ученик не видит)' : 'Правильный ответ (ученик не видит)';
+    };
+    type.onchange = sync; sync();
+    $('fAdd').onclick = () => {
+      $('fErr').textContent = '';
+      const v = type.value;
+      const src = { type: v === 'items' ? 'short' : v, subject: $('fSubject').value.trim(), title: $('fTitle').value.trim(),
+        text: $('fText').value.trim(), hint: $('fHint').value.trim(), answer: $('fAns').value.trim() };
+      if (v === 'items') {
+        src.items = $('fItems').value.split('\n').map(s => s.trim()).filter(Boolean).map(s => {
+          const i = s.lastIndexOf('|');
+          return i < 0 ? { q: s } : { q: s.slice(0, i).trim(), a: s.slice(i + 1).trim() };
+        });
+        if (!src.items.length) { $('fErr').textContent = 'Добавь хотя бы один пункт.'; return; }
+        delete src.answer;
+      }
+      if (v === 'letters') src.template = $('fTpl').value;
+      if (!src.title && !src.text) { $('fErr').textContent = 'Напиши название или текст задания.'; return; }
+      let made;
+      try {
+        const max = sortedTasks(lessons[viewId]).reduce((m, t) => Math.max(m, t.n || 0), 0);
+        made = makeTask(src, max + 1);
+      } catch (e) { $('fErr').textContent = e.message; return; }
+      const tid = 't' + Date.now().toString(36);
+      const upd = { ['rooms/' + room + '/lessons/' + viewId + '/tasks/' + tid]: made.task };
+      const k = made.key;
+      if (k !== '' && !(Array.isArray(k) && k.every(x => x === ''))) upd['keys/' + room + '/' + viewId + '/' + tid] = k;
+      db.ref().update(upd).then(() => toast('Задание добавлено')).catch(fail);
+    };
+  }
+
+  /* ---------- резервная копия ---------- */
+  $('backupBtn').onclick = async () => {
+    try {
+      const [r, k] = await Promise.all([R.once('value'), db.ref('keys/' + room).once('value')]);
+      const blob = new Blob([JSON.stringify({ saved: new Date().toISOString(), room, data: r.val(), keys: k.val() }, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'repetitor-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (e) { fail(e); }
+  };
+})();
+</script>
+</body>
+</html>
