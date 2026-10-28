@@ -161,6 +161,7 @@
       else connTimer = setTimeout(() => { connected = false; paintTop(); }, 3000);
     });
     setInterval(() => { paintTop(); paintRows(); }, 1000);
+    fetchIndex().catch(() => {});
   }
 
   // переход со старого формата (одно «текущее» занятие) и ключи для самопроверки у старых занятий
@@ -243,13 +244,19 @@
   $('linkBtn').onclick = () => $('linkPanel').classList.toggle('hide');
 
   // готовые уроки, которые Claude кладёт в папку lessons/ репозитория
+  let readyIndex = [];
+  async function fetchIndex() {
+    const r = await fetch('lessons/index.json?v=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    readyIndex = await r.json();
+    renderHead();
+    return readyIndex;
+  }
   async function loadReady() {
     const box = $('ready');
     box.innerHTML = '<p class="muted">Ищу готовые уроки…</p>';
     try {
-      const r = await fetch('lessons/index.json?v=' + Date.now(), { cache: 'no-store' });
-      if (!r.ok) throw new Error(r.status);
-      const list = (await r.json()).slice().reverse();
+      const list = (await fetchIndex()).slice().reverse();
       if (!list.length) { box.innerHTML = ''; return; }
       box.innerHTML = '<label>Готовые уроки от Claude</label><div class="ready-list">' + list.map((x, i) =>
         '<div class="ready-item"><span>' + esc(x.title) + (x.added ? ' <span class="muted">(' + esc(x.added) + ')</span>' : '') + '</span>'
@@ -263,7 +270,7 @@
           if (!res.ok) throw new Error('файл урока не найден (' + res.status + ')');
           const d = await res.json();
           d.tasks.forEach((t, i) => makeTask(t, i + 1));
-          await createLesson(d.title || x.title, d.tasks, d.subject);
+          await createLesson(d.title || x.title, d.tasks, d.subject, x);
         } catch (e) { $('importErr').textContent = 'Не получилось: ' + (e.message || e); }
         b.disabled = false;
       });
@@ -306,8 +313,13 @@
     });
   }
 
-  function makeTask(src, n) {
+  // при обновлении урока сохраняем прежний порядок слов, если набор слов тот же (иначе ответы брата «поедут»)
+  const sameSet = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.slice().sort().join('\u0001') === b.slice().sort().join('\u0001');
+  const keep = (prevArr, arr) => sameSet(prevArr, arr) ? prevArr.slice() : shuffled(arr);
+
+  function makeTask(src, n, prev) {
     const type = TYPES.includes(src.type) ? src.type : 'short';
+    if (prev && prev.type !== type) prev = null;
     const name = S(src.title) || ('№ ' + n);
     const bad = msg => { throw new Error('Задание «' + name + '»: ' + msg); };
     const task = { n, type, subject: S(src.subject), title: S(src.title), text: S(src.text), hint: S(src.hint), why: S(src.why), alt: S(src.alt) };
@@ -347,18 +359,23 @@
       const bank = (Array.isArray(src.bank) && src.bank.length ? src.bank : key).map(S).filter(Boolean);
       const left = bank.slice();
       key.forEach(w => { const i = left.indexOf(w); if (w && i < 0) bad('слова «' + w + '» нет среди слов для перетаскивания.'); if (i >= 0) left.splice(i, 1); });
-      task.bank = shuffled(bank);
+      task.bank = keep(prev && prev.bank, bank);
     }
     if (type === 'match') {
       const pairs = list(src.pairs, 'пар (pairs)');
       if (pairs.length < 2) bad('нужно хотя бы две пары.');
       task.left = pairs.map(p => S(p.l));
-      task.right = shuffled(pairs.map(p => S(p.r)));
+      task.right = keep(prev && prev.right, pairs.map(p => S(p.r)));
       key = pairs.map(p => S(p.r));
     }
     if (type === 'sort') {
       const groups = list(src.groups, 'групп (groups)').map(S);
-      const words = shuffled(list(src.words, 'слов (words)'));
+      const srcWords = list(src.words, 'слов (words)');
+      let words;
+      if (prev && sameSet(prev.words, srcWords.map(w => S(w.w)))) {
+        const pool = srcWords.slice();
+        words = prev.words.map(w => pool.splice(pool.findIndex(x => S(x.w) === w), 1)[0]);
+      } else words = shuffled(srcWords);
       words.forEach(w => { if (!groups.includes(S(w.g))) bad('у слова «' + S(w.w) + '» группа «' + S(w.g) + '» не из списка.'); });
       task.groups = groups;
       task.words = words.map(w => S(w.w));
@@ -370,7 +387,8 @@
         const m = S(it.a).match(/^(.*?)\s*([.!?]*)$/);
         const words = m[1].split(/\s+/).filter(Boolean);
         if (words.length < 2) bad('в предложении ' + (i + 1) + ' меньше двух слов.');
-        return clean({ words: shuffled(words), end: m[2], tr: S(it.tr), pic: S(it.pic), why: S(it.why) });
+        const pw = prev && prev.items && prev.items[i] && prev.items[i].words;
+        return clean({ words: keep(pw, words), end: m[2], tr: S(it.tr), pic: S(it.pic), why: S(it.why) });
       });
       key = items.map(it => S(it.a));
     }
@@ -394,7 +412,7 @@
   }
   const hasKey = k => k !== '' && k != null && !(Array.isArray(k) && k.every(x => x === ''));
 
-  async function createLesson(title, srcTasks, subject) {
+  async function createLesson(title, srcTasks, subject, from) {
     const id = R.child('lessons').push().key;
     const tasks = {}, k = {}, ch = {};
     srcTasks.forEach((s, i) => {
@@ -404,7 +422,8 @@
       if (hasKey(key)) { k[tid] = key; ch[tid] = enc(key); }
     });
     await db.ref().update({
-      ['rooms/' + room + '/lessons/' + id]: clean({ title: title || 'Домашка', subject: S(subject), created: TS, tasks }),
+      ['rooms/' + room + '/lessons/' + id]: clean({ title: title || 'Домашка', subject: S(subject), created: TS, tasks,
+        src: from ? from.file : '', ver: from ? (from.version || 1) : null }),
       ['keys/' + room + '/' + id]: Object.keys(k).length ? k : null,
       ['rooms/' + room + '/check/' + id]: Object.keys(ch).length ? ch : null,
       ['rooms/' + room + '/open/' + id]: true
@@ -439,12 +458,19 @@
       + '<span class="tag ' + st.cls + '">' + st.txt + '</span>'
       + (isOpen(viewId) ? '<button class="btn plain small" data-open="0">Скрыть у брата</button>' : '<button class="btn light small" data-open="1">Показать брату</button>')
       + (done[viewId] ? '<button class="btn plain small" data-reopen>Вернуть в работу</button>' : '')
+      + (newer(l) ? '<button class="btn small" id="updBtn">⬆ Обновить урок до новой версии</button>' : '')
       + '<button class="btn light small" id="keysBtn">' + (showKeys ? 'Скрыть ключи' : 'Показать ключи') + '</button>'
       + '<button class="btn plain small" id="delLesson">Удалить</button>';
     if (h.innerHTML === html) return;
     h.innerHTML = html;
     const ob = h.querySelector('[data-open]');
     ob.onclick = () => R.child('open/' + viewId).set(ob.dataset.open === '1' ? true : null).catch(fail);
+    const ub = $('updBtn');
+    if (ub) ub.onclick = () => {
+      if (!confirm('Обновить урок «' + (l.title || '') + '»? Ответы брата сохранятся, изменятся тексты, правила и подсказки.')) return;
+      ub.disabled = true;
+      updateLesson(viewId, newer(l)).then(() => toast('Урок обновлён — у брата он уже новый')).catch(e => { ub.disabled = false; fail(e); });
+    };
     const rb = h.querySelector('[data-reopen]');
     if (rb) rb.onclick = () => R.child('done/' + viewId).remove().catch(fail);
     $('keysBtn').onclick = () => {
@@ -463,6 +489,48 @@
         ['keys/' + room + '/' + id]: null
       }).then(() => setView(null)).catch(fail);
     };
+  }
+
+  // есть ли в папке lessons/ более новая версия этого урока
+  function newer(l) {
+    const e = readyIndex.find(x => (l.src && x.file === l.src) || (!l.src && (x.title === l.title || (x.aliases || []).includes(l.title))));
+    return e && (e.version || 1) > (l.ver || 1) ? e : null;
+  }
+  async function updateLesson(id, entry) {
+    const res = await fetch('lessons/' + entry.file + '?v=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('файл урока не найден (' + res.status + ')');
+    const d = await res.json();
+    const old = (lessons[id] && lessons[id].tasks) || {};
+    const tasks = {}, k = {}, ch = {}, upd = {};
+    d.tasks.forEach((src, i) => {
+      const tid = 't' + (i + 1);
+      const { task, key } = makeTask(src, i + 1, old[tid]);
+      tasks[tid] = task;
+      if (hasKey(key)) { k[tid] = key; ch[tid] = enc(key); }
+      // тип задания поменялся — старый ответ к нему не подходит
+      if (old[tid] && old[tid].type !== task.type) {
+        upd['rooms/' + room + '/answers/' + id + '/' + tid] = null;
+        upd['rooms/' + room + '/marks/' + id + '/' + tid] = null;
+      }
+    });
+    // задания, добавленные вручную, оставляем в конце
+    Object.keys(old).filter(tid => !/^t\d+$/.test(tid)).forEach((tid, j) => { tasks[tid] = Object.assign({}, old[tid], { n: d.tasks.length + 1 + j }); });
+    Object.keys(old).filter(tid => /^t\d+$/.test(tid) && !tasks[tid]).forEach(tid => {
+      upd['rooms/' + room + '/answers/' + id + '/' + tid] = null;
+      upd['rooms/' + room + '/marks/' + id + '/' + tid] = null;
+    });
+    const oldKeys = (await db.ref('keys/' + room + '/' + id).once('value')).val() || {};
+    Object.keys(oldKeys).filter(tid => !/^t\d+$/.test(tid)).forEach(tid => { k[tid] = oldKeys[tid]; ch[tid] = enc(oldKeys[tid]); });
+    Object.assign(upd, {
+      ['rooms/' + room + '/lessons/' + id + '/tasks']: tasks,
+      ['rooms/' + room + '/lessons/' + id + '/title']: d.title || entry.title,
+      ['rooms/' + room + '/lessons/' + id + '/src']: entry.file,
+      ['rooms/' + room + '/lessons/' + id + '/ver']: entry.version || 1,
+      ['keys/' + room + '/' + id]: Object.keys(k).length ? k : null,
+      ['rooms/' + room + '/check/' + id]: Object.keys(ch).length ? ch : null
+    });
+    if (d.subject) upd['rooms/' + room + '/lessons/' + id + '/subject'] = d.subject;
+    await db.ref().update(upd);
   }
 
   function renderLesson() {

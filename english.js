@@ -9,24 +9,63 @@
   const pic = p => p ? '<div class="pic" aria-hidden="true">' + esc(p) + '</div>' : '';
   const tr = t => t ? '<div class="tr">' + esc(t) + '</div>' : '';
 
-  /* ---------- озвучка (синтез речи браузера: Safari и Chrome на Mac умеют по-английски) ---------- */
+  /* ---------- озвучка (синтез речи браузера) ----------
+     Берём самый живой английский голос, какой есть на устройстве (Premium/Enhanced, Google, Samantha…),
+     говорим медленно, «your / yours» — по отдельности с паузой; повторное нажатие — ещё медленнее. */
   const canSay = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  const ROBOT = /compact|eloquence|albert|bad news|bahh|bells|boing|bubbles|cellos|wobble|good news|jester|organ|superstar|trinoids|whisper|zarvox|fred|junior|ralph|kathy|grandma|grandpa|rocko|shelley|flo|eddy|reed|sandy/i;
+  function score(v) {
+    if (!/^en/i.test(v.lang)) return -1e3;
+    let s = 0;
+    if (/premium|enhanced|natural|neural/i.test(v.name)) s += 50;
+    if (/^google (us|uk) english/i.test(v.name)) s += 40;
+    if (/ava|zoe|samantha|allison|susan|serena|daniel|karen|moira|tessa|evan|nathan/i.test(v.name)) s += 30;
+    if (ROBOT.test(v.name)) s -= 60;
+    if (/^en[-_]US/i.test(v.lang)) s += 10; else if (/^en[-_]GB/i.test(v.lang)) s += 6;
+    return s;
+  }
+  const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
   let voice = null;
+  function voices() {
+    if (!canSay) return [];
+    return (speechSynthesis.getVoices() || []).filter(v => /^en/i.test(v.lang)).sort((a, b) => score(b) - score(a));
+  }
   function pickVoice() {
-    if (!canSay) return;
-    const vs = speechSynthesis.getVoices() || [];
-    voice = vs.find(v => /^en[-_]US/i.test(v.lang) && /samantha|alex|google us/i.test(v.name))
-      || vs.find(v => /^en[-_](US|GB)/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+    const vs = voices();
+    const saved = store.get('rep_voice');
+    voice = (saved && vs.find(v => v.name === saved)) || vs[0] || null;
   }
   if (canSay) { pickVoice(); try { speechSynthesis.addEventListener('voiceschanged', pickVoice); } catch (e) {} }
-  function say(text) {
+  function setVoice(name) { store.set('rep_voice', name); pickVoice(); }
+
+  let last = { text: '', at: 0 }, queueId = 0;
+  function say(text, opts) {
     if (!canSay || !text) return;
+    if (!voice) pickVoice();
+    const clean = String(text).replace(/[«»"]/g, '').trim();
+    const n = Date.now();
+    // нажал ещё раз то же слово — скажем совсем медленно (и дальше чередуем)
+    const slow = (opts && opts.slow) || (last.text === clean && n - last.at < 4000 && !last.slow);
+    last = { text: clean, at: n, slow };
+    // «your / yours», «I → me», «my cat — The cat is mine» — по частям с паузой
+    const parts = clean.split(/\s*(?:\/|→|—|–|·)\s*/).filter(Boolean);
+    const id = ++queueId;
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(String(text).replace(/[«»"]/g, ''));
-    u.lang = voice ? voice.lang : 'en-US';
-    if (voice) u.voice = voice;
-    u.rate = 0.8;
-    speechSynthesis.speak(u);
+    const next = i => {
+      if (id !== queueId || i >= parts.length) return;
+      const words = parts[i].split(/\s+/).length;
+      const u = new SpeechSynthesisUtterance(parts[i]);
+      u.lang = voice ? voice.lang : 'en-US';
+      if (voice) u.voice = voice;
+      u.rate = slow ? 0.5 : words <= 2 ? 0.68 : 0.78;
+      u.pitch = 1;
+      let done = false;
+      const go = () => { if (done) return; done = true; setTimeout(() => next(i + 1), 550); };
+      u.onend = go; u.onerror = go;
+      setTimeout(go, 1500 + parts[i].length * (slow ? 220 : 140));   // если браузер не сообщил о конце
+      speechSynthesis.speak(u);
+    };
+    next(0);
   }
   const isEn = s => /[A-Za-z]/.test(s || '') && !/[А-Яа-яЁё]/.test(s || '');
   const sayBtn = text => canSay && isEn(text) ? '<button type="button" class="say" data-say="' + esc(text) + '" aria-label="Послушать, как произносится">🔊</button>' : '';
@@ -332,5 +371,5 @@
     return null;
   }
 
-  window.EN = { html, mount, itemEls, whyHost, say, canSay, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
+  window.EN = { html, mount, itemEls, whyHost, say, canSay, voices, setVoice, currentVoice: () => voice, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
 })();

@@ -133,9 +133,29 @@
           + '<span class="b-icon" aria-hidden="true">' + iconOf(l) + '</span>'
           + '<span class="b-body"><span class="b-title">' + esc(l.title || 'Занятие') + '</span><span class="b-st">' + st + '</span>'
           + '<span class="b-bar"><i style="width:' + (p.n ? Math.round(100 * p.ok / p.n) : 0) + '%"></i></span></span></button>';
-      }).join('') + '</div>';
+      }).join('') + '</div>' + voiceBox();
     app.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openLesson(b.dataset.open));
+    bindVoice();
   }
+
+  /* ---------- выбор голоса для английского (настраивается один раз на этом компьютере) ---------- */
+  function voiceBox() {
+    const vs = EN.voices();
+    if (!EN.canSay || !vs.length) return '';
+    const cur = EN.currentVoice();
+    return '<details class="voice-box"><summary>🔊 Голос для английского</summary>'
+      + '<p class="muted">Выбери голос, который звучит живее. Лучшие — с пометкой Premium, Enhanced или Google.</p>'
+      + '<div class="voice-row"><select id="voiceSel">' + vs.map(v => '<option value="' + esc(v.name) + '"' + (cur && cur.name === v.name ? ' selected' : '') + '>'
+        + esc(v.name) + ' (' + esc(v.lang) + ')</option>').join('') + '</select>'
+      + '<button class="btn light small" id="voiceTest">Послушать</button></div></details>';
+  }
+  function bindVoice() {
+    const sel = document.getElementById('voiceSel');
+    if (!sel) return;
+    sel.onchange = () => { EN.setVoice(sel.value); EN.say('Hello! This is your book. It is yours.'); };
+    document.getElementById('voiceTest').onclick = () => EN.say('Hello! This is your book. It is yours.');
+  }
+  if (EN.canSay) { try { speechSynthesis.addEventListener('voiceschanged', () => { if (!viewId && !document.getElementById('voiceSel')) renderHome(); }); } catch (e) {} }
 
   function setHash(l) {
     const h = 'k=' + room + (l ? '&l=' + l : '');

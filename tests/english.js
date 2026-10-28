@@ -17,7 +17,9 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
     window.__said = [];
     window.SpeechSynthesisUtterance = function (t) { this.text = t; };
     Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
-      speak: u => window.__said.push(u.text), cancel() {}, getVoices: () => [{ lang: 'en-US', name: 'Samantha' }], addEventListener() {} } });
+      speak: u => window.__said.push({ text: u.text, rate: u.rate, voice: u.voice && u.voice.name }), cancel() {},
+      getVoices: () => [{ lang: 'en-US', name: 'Fred' }, { lang: 'en-US', name: 'Samantha' }, { lang: 'en-US', name: 'Ava (Premium)' }, { lang: 'ru-RU', name: 'Milena' }],
+      addEventListener() {} } });
   });
   await ctx.route(/gstatic\.com\/firebasejs\/.*\.js$/, r => r.fulfill({ contentType: 'text/javascript', body: mock }));
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
@@ -53,6 +55,8 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   await S.setViewportSize({ width: 1440, height: 900 });
   await S.goto(link);
   await S.waitForSelector('.block');
+  ok(!!(await S.$('#voiceSel')) && (await S.$eval('#voiceSel', e => e.value)) === 'Ava (Premium)', 'по умолчанию выбран самый живой голос (Premium)');
+  ok(!(await S.$$eval('#voiceSel option', os => os.some(o => o.value === 'Milena'))), 'в списке только английские голоса');
   await S.click('.block');
   await S.waitForSelector('[data-task="t11"]');
   ok((await S.$$('.sheet.theory')).length === 4, 'у брата 4 карточки-правила');
@@ -76,7 +80,11 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   const fc = S.locator('[data-task="t9"] [data-flip]').first();
   await fc.scrollIntoViewIfNeeded();
   await fc.locator('[data-say]').click();
-  ok((await S.evaluate(() => window.__said.slice(-1)[0])) === 'always', '🔊 произносит слово');
+  let said = await S.evaluate(() => window.__said.slice(-1)[0]);
+  ok(said.text === 'always' && said.rate <= 0.7 && said.voice === 'Ava (Premium)', '🔊 произносит слово медленно лучшим голосом: ' + JSON.stringify(said));
+  await fc.locator('[data-say]').click();
+  said = await S.evaluate(() => window.__said.slice(-1)[0]);
+  ok(said.rate <= 0.5, 'повторное нажатие — ещё медленнее');
   ok(!(await fc.evaluate(e => e.classList.contains('flipped'))), '🔊 не переворачивает карточку');
   await fc.click({ position: { x: 10, y: 10 } });
   ok(await fc.evaluate(e => e.classList.contains('flipped')), 'нажатие переворачивает карточку');
@@ -84,7 +92,16 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   ok(await fc.locator('.back').isVisible() && (await fc.locator('.back .ru').textContent()) === 'всегда', 'на обороте перевод');
   ok((await S.$$('[data-task="t9"] .trick')).length === 4 && !!(await S.$('[data-task="t9"] .how ol')), 'есть лайфхаки и «как выбрать по шагам»');
   await S.locator('[data-task="t3"] .left [data-say]').first().click();
-  ok((await S.evaluate(() => window.__said.slice(-1)[0])) === 'I', '🔊 и в задании на пары');
+  ok((await S.evaluate(() => window.__said.slice(-1)[0].text)) === 'I', '🔊 и в задании на пары');
+  // «your / yours» — по отдельности, с паузой
+  await S.evaluate(() => { window.__said = []; });
+  const yy = S.locator('[data-task="t6"] [data-say="your / yours"]');
+  await yy.scrollIntoViewIfNeeded();
+  await yy.click();
+  await S.waitForTimeout(400);
+  ok((await S.evaluate(() => window.__said.map(x => x.text).join('|'))) === 'your', 'сначала только «your»');
+  await S.waitForTimeout(2600);
+  ok((await S.evaluate(() => window.__said.map(x => x.text).join('|'))) === 'your|yours', 'потом, после паузы, «yours»');
 
   // выбор
   await S.click('[data-task="t2"] .opt[data-ci="0"][data-opt="he"]');

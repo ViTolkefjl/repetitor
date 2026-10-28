@@ -446,3 +446,7 @@ textarea.answer-in { min-height: 150px; resize: vertical; line-height: 1.45; }
 .trick p { margin: 2px 0 0; font-size: 16px; }
 .alt { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: #fff; border: 2px solid #efb14c; }
 .alt b { display: block; color: #b8650a; margin-bottom: 2px; }
+.voice-box { margin-top: 28px; font-size: 15px; color: var(--muted); }
+.voice-box summary { cursor: pointer; }
+.voice-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.voice-row select { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fff; max-width: 100%; }
