@@ -28,6 +28,8 @@
       .replace(/ё/g, 'е')
       .replace(/[×*⋅]/g, '·')
       .replace(/[\s ]+/g, ' ')
+      .replace(/(\d) (?=\d)/g, '$1')
+      .replace(/(\d) ?[xх] ?(?=\d)/g, '$1·')
       .replace(/\s*([=+\-·:\/,.;()])\s*/g, '$1')
       .replace(/,/g, '.')
       .replace(/[.;]+$/, '')
@@ -72,8 +74,8 @@
       return { state, parts };
     }
     if (task.type === 'steps') {
-      const t = norm(ans.text);
-      return { state: String(key).split('|').some(k => t.includes(norm(k))) ? 'match' : 'miss' };
+      const t = norm(ans.text).replace(/ /g, '');
+      return { state: String(key).split('|').some(k => t.includes(norm(k).replace(/ /g, ''))) ? 'match' : 'miss' };
     }
     return { state: same(ans.text, key) ? 'match' : 'miss' };
   }

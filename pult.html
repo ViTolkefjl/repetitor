@@ -74,6 +74,7 @@
   let answers = {}, marks = {}, keys = {}, presence = {}, curAnswers = {};
   let showKey = {};
   let viewUnsubs = [], curUnsub = null;
+  let connected = true, connTimer = null;
   // подписка, которую можно снять точечно (ref.off() без колбэка снял бы и чужие подписки на тот же путь)
   function listen(ref, cb) {
     const h = ref.on('value', cb, fail);
@@ -146,6 +147,12 @@
       if (currentId) curUnsub = listen(R.child('answers/' + currentId), a => { curAnswers = a.val() || {}; paintTop(); });
     }, fail);
     R.child('presence').on('value', s => { presence = s.val() || {}; paintTop(); paintRows(); });
+    // после разрыва связи даём 3 с на переподключение, чтобы статус не мигал
+    db.ref('.info/connected').on('value', s => {
+      clearTimeout(connTimer);
+      if (s.val()) { connected = true; paintTop(); }
+      else connTimer = setTimeout(() => { connected = false; paintTop(); }, 3000);
+    });
     setInterval(() => { paintTop(); paintRows(); }, 1000);
   }
 
@@ -378,7 +385,8 @@
       active += a.active || 0;
     });
     let cls, txt, sub = '';
-    if (!currentId) { cls = ''; txt = 'Нет открытого занятия'; }
+    if (!connected) { cls = 'bad'; txt = 'Нет связи'; sub = 'проверь интернет и VPN на этом устройстве'; }
+    else if (!currentId) { cls = ''; txt = 'Нет открытого занятия'; }
     else if (!p.online) { cls = 'bad'; txt = 'Не на странице'; sub = p.t ? 'вышел в ' + clock(p.t) : 'ещё не заходил'; }
     else if (p.visible === false || p.focus === false) { cls = 'bad'; txt = 'Ушёл в другое окно'; sub = p.t ? 'уже ' + dur(n - p.t) : ''; }
     else if (!lastT) { cls = 'warn'; txt = 'Открыл страницу'; sub = 'пока ничего не написал'; }

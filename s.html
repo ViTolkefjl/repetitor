@@ -33,6 +33,7 @@
 
   /* ---------- присутствие ---------- */
   const pres = R.child('presence');
+  let netTimer = null;
   function presence(extra) {
     pres.update(Object.assign({
       online: true,
@@ -45,8 +46,15 @@
   }
   db.ref('.info/connected').on('value', s => {
     const on = !!s.val();
-    document.getElementById('net').classList.toggle('hide', on);
-    if (on) { pres.onDisconnect().update({ online: false, t: TS }); presence(); }
+    clearTimeout(netTimer);
+    if (on) {
+      document.getElementById('net').classList.add('hide');
+      pres.onDisconnect().update({ online: false, t: TS });
+      presence();
+    } else {
+      // при загрузке Firebase сначала сообщает «нет связи» — плашку показываем, только если это длится дольше 3 с
+      netTimer = setTimeout(() => document.getElementById('net').classList.remove('hide'), 3000);
+    }
   });
   document.addEventListener('visibilitychange', () => presence());
   window.addEventListener('focus', () => presence());
@@ -82,9 +90,13 @@
   function build() {
     if (!lesson) { renderEmpty(); return; }
     tasks = sortedTasks(lesson);
-    const active = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.key;
+    const ae = document.activeElement;
+    const active = ae && ae.dataset && ae.dataset.key;
+    let sel = null;
+    try { sel = active ? [ae.selectionStart, ae.selectionEnd] : null; } catch (e) {}
 
     let html = '<header class="s-head"><h1>' + esc(lesson.title || 'Домашка') + '</h1><div class="dots" id="dots" aria-label="Прогресс"></div></header>';
+    if (!tasks.length) html += '<p class="muted">Учитель ещё добавляет задания — они появятся здесь сами.</p>';
     html += '<div class="banner hide" id="done">Всё верно! Теперь аккуратно перепиши в тетрадь ✍️</div>';
     tasks.forEach((t, i) => {
       html += '<section class="sheet" data-task="' + t.id + '">'
@@ -105,9 +117,17 @@
       el.addEventListener('focus', () => { focusTask = el.closest('[data-task]').dataset.task; presence(); });
     });
     app.querySelectorAll('.gap').forEach(el => el.addEventListener('keydown', gapKeys));
+    app.querySelectorAll('input[data-key]').forEach(el => el.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const all = Array.from(app.querySelectorAll('[data-key]:not([readonly])'));
+      const nx = all[all.indexOf(el) + 1];
+      if (nx) nx.focus(); else el.blur();
+    }));
     app.querySelectorAll('[data-hint]').forEach(b => b.addEventListener('click', () => {
       document.getElementById('hint-' + b.dataset.hint).classList.remove('hide');
       b.remove();
+      (answers[b.dataset.hint] = answers[b.dataset.hint] || {}).hint = true;
       R.child('answers/' + lessonId + '/' + b.dataset.hint).update({ hint: true });
     }));
     // открытые раньше подсказки
@@ -117,7 +137,10 @@
         if (h) { h.classList.remove('hide'); const b = app.querySelector('[data-hint="' + t.id + '"]'); b && b.remove(); }
       }
     });
-    if (active) { const el = app.querySelector('[data-key="' + active + '"]'); el && el.focus(); }
+    if (active) {
+      const el = app.querySelector('[data-key="' + active + '"]');
+      if (el) { el.focus(); try { sel && el.setSelectionRange(sel[0], sel[1]); } catch (e) {} }
+    }
     paintMarks();
   }
 
@@ -126,7 +149,7 @@
     if (t.type === 'short' && Array.isArray(t.items)) {
       return '<div class="items">' + t.items.map((it, i) =>
         '<label class="item"><span class="q">' + esc(it.q) + '</span>'
-        + '<input class="answer-in" data-key="' + t.id + ':' + i + '" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc((a.parts || [])[i] || '') + '"></label>'
+        + '<input class="answer-in" data-key="' + t.id + ':' + i + '" autocapitalize="off" spellcheck="false" autocorrect="off" autocomplete="off" value="' + esc((a.parts || [])[i] || '') + '"></label>'
       ).join('') + '</div>';
     }
     if (t.type === 'letters') {
@@ -134,14 +157,14 @@
       const parts = a.parts || [];
       const html = esc(t.text || '').replace(/_/g, () => {
         const i = n++;
-        return '<input class="gap" maxlength="2" data-key="' + t.id + ':' + i + '" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Пропуск ' + (i + 1) + '" value="' + esc(parts[i] || '') + '">';
+        return '<input class="gap" maxlength="2" data-key="' + t.id + ':' + i + '" autocapitalize="off" spellcheck="false" autocorrect="off" autocomplete="off" aria-label="Пропуск ' + (i + 1) + '" value="' + esc(parts[i] || '') + '">';
       });
       return '<div class="letters">' + html + '</div>';
     }
     if (t.type === 'steps') {
-      return '<textarea class="answer-in" data-key="' + t.id + '" spellcheck="false" placeholder="Пиши решение по шагам…">' + esc(a.text || '') + '</textarea>';
+      return '<textarea class="answer-in" data-key="' + t.id + '" spellcheck="false" autocorrect="off" autocomplete="off" placeholder="Пиши решение по шагам…">' + esc(a.text || '') + '</textarea>';
     }
-    return '<input class="answer-in" data-key="' + t.id + '" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Ответ" value="' + esc(a.text || '') + '">';
+    return '<input class="answer-in" data-key="' + t.id + '" autocapitalize="off" spellcheck="false" autocorrect="off" autocomplete="off" placeholder="Ответ" value="' + esc(a.text || '') + '">';
   }
 
   // в пропусках: после буквы — к следующему пропуску, Backspace в пустом — к предыдущему
@@ -200,6 +223,10 @@
       const m = marks[t.id];
       const sec = box.closest('.sheet');
       sec.querySelectorAll('[data-key]').forEach(el => { el.readOnly = !!(m && m.s === 'ok'); });
+      // перерисовываем только изменившуюся пометку, чтобы анимация «ручки» не повторялась на всех сразу
+      const sig = m ? m.s + '|' + (m.c || '') + '|' + m.t : '';
+      if (box.dataset.sig === sig) return;
+      box.dataset.sig = sig;
       if (!m) { box.className = 'mark hide'; box.innerHTML = ''; return; }
       box.className = 'mark ' + (m.s === 'ok' ? 'ok' : 'fix');
       box.innerHTML = m.s === 'ok'
