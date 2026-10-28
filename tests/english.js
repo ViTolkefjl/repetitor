@@ -45,6 +45,8 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   S.on('pageerror', e => errs.push('S: ' + e.message));
   await S.setViewportSize({ width: 1440, height: 900 });
   await S.goto(link);
+  await S.waitForSelector('.block');
+  await S.click('.block');
   await S.waitForSelector('[data-task="t11"]');
   ok((await S.$$('.sheet.theory')).length === 4, 'у брата 4 карточки-правила');
   ok((await S.$$('#dots i')).length === 7, 'в прогрессе только 7 заданий, без правил');
@@ -66,9 +68,11 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   await S.click('[data-task="t2"] .opt[data-ci="0"][data-opt="he"]');
   await S.click('[data-task="t2"] .opt[data-ci="1"][data-opt="they"]');
   await T.waitForTimeout(250);
-  ok((await T.textContent('#live-t2')).includes('Tom → he'), 'выбор виден учителю вживую');
-  ok((await T.innerHTML('#live-t2')).includes('class="bad">they'), 'неверный выбор подсвечен');
-  ok((await T.textContent('#stText')) === 'Печатает', 'статус «Печатает» и при нажатиях');
+  const rows = async id => T.$$eval('#cmp-' + id + ' tbody tr', trs => trs.map(tr => ({ cls: tr.className, cells: Array.from(tr.cells).map(c => c.textContent.trim()) })));
+  let r2 = await rows('t2');
+  ok(r2[0].cells[1].includes('he') && r2[0].cls === 'match', 'выбор виден учителю вживую, напротив задания');
+  ok(r2[1].cells[1].includes('they') && r2[1].cls === 'miss' && r2[1].cells[2] === 'she', 'неверный выбор подсвечен, ключ в той же строке');
+  ok((await T.textContent('#stText')) === 'Работает', 'статус «Работает» и при нажатиях');
 
   // пары: мышью
   await drag('t3', 'я', '[data-slot="m0"]');
@@ -88,7 +92,7 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   await drag('t3', 'ты, вы', '[data-slot="m2"]');
   await drag('t3', 'они', '[data-slot="m5"]');
   await T.waitForTimeout(250);
-  ok((await T.textContent('#chips-t3')).includes('совпало с ключом'), 'пары собраны верно — ключ совпал');
+  ok((await rows('t3')).every(r => r.cls === 'match'), 'пары собраны верно — все строки совпали');
 
   // слово в пропуск (одно намеренно неверно)
   await drag('t5', 'me', '[data-slot="g0"]');
@@ -96,8 +100,8 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   await drag('t5', 'her', '[data-slot="g2"]');
   await drag('t5', 'them', '[data-slot="g3"]');
   await T.waitForTimeout(250);
-  const l5 = await T.innerHTML('#live-t5');
-  ok(/class="bad">her/.test(l5) && /class="good">me/.test(l5), 'в пропусках видно верные и неверные слова');
+  const r5 = await rows('t5');
+  ok(r5[2].cls === 'miss' && r5[2].cells[1].includes('her') && r5[2].cells[2] === 'him' && r5[0].cls === 'match', 'пропуски: каждое слово напротив своего предложения и ключа');
 
   // собери предложение: нажатиями по порядку
   for (const w of ['Mum', 'loves', 'me']) await chip('t8', w).click();
@@ -122,15 +126,40 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   ok((await S.textContent('[data-task="t8"] [data-slot="L0"]')) === 'Mumloves', 'нажатие возвращает слово из строки');
   await chip('t8', 'me').click();
   await T.waitForTimeout(250);
-  ok((await T.textContent('#live-t8')).includes('Mum loves me.'), 'учитель видит собранное предложение');
+  ok((await T.textContent('#cmp-t8')).includes('Mum loves me.'), 'учитель видит собранное предложение');
 
   // по группам
   await drag('t10', 'now', '[data-slot="G1"]');
   await drag('t10', 'always', '[data-slot="G0"]');
   await drag('t10', 'never', '[data-slot="G1"]');
   await T.waitForTimeout(250);
-  const l10 = await T.innerHTML('#live-t10');
-  ok(/class="bad">never/.test(l10) && /не разложены/.test(l10), 'группы: ошибка и неразложенные видны');
+  const r10 = await rows('t10');
+  ok(r10.find(r => r.cells[0] === 'never').cls === 'miss' && r10.some(r => r.cells[1] === '—'), 'группы: ошибка и неразложенные видны');
+
+  // лесенка на выборе
+  await S.click('[data-task="t11"] .opt[data-ci="0"][data-opt="reads"]');
+  await S.click('[data-task="t11"] .opt[data-ci="1"][data-opt="reads"]');
+  await S.click('[data-check="t11"]');
+  ok((await S.textContent('#fb-t11')).includes('Верно 1 из 2'), 'выбор, шаг 1: счёт');
+  await S.click('[data-check="t11"]');
+  ok(await S.$eval('[data-task="t11"] .choice-item:nth-child(1)', e => e.classList.contains('fb-ok')), 'выбор, шаг 2: верное зелёное');
+  await S.click('[data-task="t11"] .opt[data-ci="0"][data-opt="is reading"]');
+  ok(await S.$eval('[data-task="t11"] .opt[data-ci="0"][data-opt="reads"]', e => e.classList.contains('on')), 'выбор, шаг 2: зелёное не переключить');
+  await S.click('[data-check="t11"]');
+  ok((await S.textContent('[data-task="t11"]')).includes('Правильно: is reading'), 'выбор, шаг 3: правильный ответ');
+  // перетаскивание: шаг 2 закрепляет верные слова
+  await drag('t10', 'always', '[data-slot="G0"]');
+  for (const w of ['Look!', 'at the moment', 'Listen!']) await drag('t10', w, '[data-slot="G1"]');
+  for (const w of ['every day', 'sometimes']) await drag('t10', w, '[data-slot="G0"]');
+  await S.click('[data-check="t10"]');
+  await S.click('[data-check="t10"]');
+  ok(await chip('t10', 'now').evaluate(e => e.classList.contains('fb-ok')), 'группы, шаг 2: верное слово зелёное');
+  ok(await chip('t10', 'never').evaluate(e => e.classList.contains('fb-bad')), 'группы, шаг 2: ошибка выделена');
+  await drag('t10', 'now', '[data-slot="B"]');
+  ok((await S.textContent('[data-task="t10"] [data-slot="G1"]')).includes('now'), 'группы, шаг 2: зелёное не утащить');
+  await drag('t10', 'never', '[data-slot="G0"]');
+  await S.click('[data-check="t10"]');
+  ok((await S.textContent('#fb-t10')).includes('Верно!'), 'исправил ошибку — «Верно!»');
 
   await T.screenshot({ path: path.join(OUT, 'out-en-teacher.png'), fullPage: true });
   await S.screenshot({ path: path.join(OUT, 'out-en-student.png'), fullPage: true });
@@ -152,7 +181,7 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   ok((await S.textContent('[data-task="t8"] [data-slot="L1"]')) === 'Thecatismine', 'порядок слов восстановлен');
   ok((await S.textContent('[data-task="t5"] [data-slot="g2"]')) === 'her', 'пропуски восстановлены');
   ok(await S.$eval('[data-task="t2"] .opt[data-ci="0"][data-opt="he"]', e => e.classList.contains('on')), 'выбор восстановлен');
-  ok((await S.$$eval('[data-task="t10"] [data-slot="G1"] .wchip', els => els.map(e => e.textContent).sort().join(','))) === 'never,now', 'группы восстановлены');
+  ok((await S.$$eval('[data-task="t10"] [data-slot="G1"] .wchip', els => els.map(e => e.textContent).sort().join(','))) === 'Listen!,Look!,at the moment,now', 'группы восстановлены');
 
   // планшет/телефон: перетаскивание пальцем
   const ctx2 = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
@@ -162,10 +191,11 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   P.on('pageerror', e => errs.push('P: ' + e.message));
   await P.goto(BASE + 'style.css');
   await P.evaluate(s => localStorage.setItem('mockdb', s), await S.evaluate(() => localStorage.getItem('mockdb')));
-  await P.goto(link); await P.waitForSelector('[data-task="t11"]');
-  await P.locator('[data-task="t10"] .wchip').filter({ hasText: /^every day$/ }).tap();
-  await P.locator('[data-task="t10"] [data-slot="G0"]').tap();
-  ok((await P.textContent('[data-task="t10"] [data-slot="G0"]')).includes('every day'), 'касанием на телефоне тоже работает');
+  await P.goto(link); await P.waitForSelector('.block'); await P.tap('.block'); await P.waitForSelector('[data-task="t11"]');
+  await P.locator('[data-task="t5"] [data-slot="g2"] .wchip').tap();
+  await P.locator('[data-task="t5"] .wchip').filter({ hasText: /^him$/ }).tap();
+  await P.locator('[data-task="t5"] [data-slot="g2"]').tap();
+  ok((await P.textContent('[data-task="t5"] [data-slot="g2"]')) === 'him', 'касанием на телефоне тоже работает');
   ok(!(await P.evaluate(() => document.documentElement.scrollWidth > innerWidth)), 'на узком экране нет горизонтальной прокрутки');
   await P.screenshot({ path: path.join(OUT, 'out-en-phone.png'), fullPage: false });
 

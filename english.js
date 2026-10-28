@@ -94,14 +94,20 @@
     Object.keys(slotEls).forEach(k => { state[k] = []; });
     chips.forEach((c, i) => state[c.home].push(i));
     let sel = null;
+    const els = {};
 
     const where = i => Object.keys(state).find(k => state[k].includes(i));
+    // зелёное после самопроверки закреплено: его не двигаем и не вытесняем
+    const fixedEl = el => !!(el && (el.classList.contains('fb-ok') || el.closest('.fb-ok')));
+    const chipFixed = i => isLocked() || fixedEl(els[i]);
     const isBank = k => k[0] === 'B';
     const isOne = k => slotEls[k].classList.contains('one');
     function takeOut(i) { const k = where(i); if (k) state[k].splice(state[k].indexOf(i), 1); }
     function move(i, to, before) {
       if (isBank(to)) to = chips[i].home;            // в любой банк — значит «вернуть домой»
       if (t.type === 'order' && !isBank(to) && to.slice(1) !== chips[i].home.slice(1)) return; // чужая строка
+      if (fixedEl(slotEls[to]) && !isBank(to)) return;
+      if (isOne(to) && state[to].length && chipFixed(state[to][0])) return;
       takeOut(i);
       if (isOne(to) && state[to].length) state[chips[state[to][0]].home].push(state[to].shift());
       const arr = state[to];
@@ -132,7 +138,6 @@
       board.classList.toggle('picking', sel != null);
       board.classList.toggle('locked', isLocked());
     }
-    const els = {};
     function chipEl(i) {
       if (!els[i]) {
         const b = document.createElement('button');
@@ -163,7 +168,7 @@
     function changed() { sel = null; draw(); const r = result(); onChange(r.parts, r.text); }
 
     function tap(i) {
-      if (isLocked()) return;
+      if (chipFixed(i)) return;
       const k = where(i);
       if (!isBank(k)) { move(i, chips[i].home); return changed(); }
       if (t.type === 'order') { move(i, 'L' + chips[i].home.slice(1)); return changed(); }
@@ -176,8 +181,8 @@
     });
 
     function down(e) {
-      if (isLocked() || e.button > 0) return;
       const chip = e.currentTarget, i = +chip.dataset.chip;
+      if (chipFixed(i) || e.button > 0) return;
       e.preventDefault();
       try { chip.setPointerCapture(e.pointerId); } catch (_) {}
       const st = { x: e.clientX, y: e.clientY, drag: false, ghost: null, over: null };
@@ -224,7 +229,7 @@
   function mountChoice(sec, t, a, onChange, isLocked) {
     const parts = ((a && a.parts) || []).slice();
     sec.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => {
-      if (isLocked()) return;
+      if (isLocked() || b.closest('.fb-ok')) return;
       const i = +b.dataset.ci;
       parts[i] = b.dataset.opt;
       for (let k = 0; k < (t.items || []).length; k++) if (parts[k] == null) parts[k] = '';
@@ -238,5 +243,24 @@
     sec._redraw();
   }
 
-  window.EN = { html, mount, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
+  /* Элемент на каждый пункт ответа (для подсветки после самопроверки) и место для объяснения «почему» */
+  function itemEls(sec, t) {
+    const all = sel => Array.from(sec.querySelectorAll(sel));
+    if (t.type === 'choice') return all('.choice-item');
+    if (t.type === 'fill') return all('[data-slot^="g"]').sort((a, b) => +a.dataset.slot.slice(1) - +b.dataset.slot.slice(1));
+    if (t.type === 'match') return all('.match-row');
+    if (t.type === 'sort') return (t.words || []).map((_, i) => sec.querySelector('.wchip[data-chip="' + i + '"]'));
+    if (t.type === 'order') return all('.order-item');
+    return [];
+  }
+  function whyHost(el, t) {
+    if (!el) return null;
+    if (t.type === 'choice') return el.querySelector('.ci-body');
+    if (t.type === 'fill') return el.closest('.fill-item').lastElementChild;
+    if (t.type === 'match') return el;
+    if (t.type === 'order') return el.querySelector('.oi-body');
+    return null;
+  }
+
+  window.EN = { html, mount, itemEls, whyHost, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
 })();

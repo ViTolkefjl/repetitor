@@ -15,21 +15,43 @@
     "rooms": {
       "$room": {
         ".read": "$room.length >= 16",
-        "meta":    { ".write": "auth != null && auth.uid === root.child('owner').val()" },
-        "current": { ".write": "auth != null && auth.uid === root.child('owner').val()" },
-        "lessons": { ".write": "auth != null && auth.uid === root.child('owner').val()" },
-        "marks":   { ".write": "auth != null && auth.uid === root.child('owner').val()" },
+        "meta": {
+          ".write": "auth != null && auth.uid === root.child('owner').val()"
+        },
+        "current": {
+          ".write": "auth != null && auth.uid === root.child('owner').val()"
+        },
+        "lessons": {
+          ".write": "auth != null && auth.uid === root.child('owner').val()"
+        },
+        "marks": {
+          ".write": "auth != null && auth.uid === root.child('owner').val()"
+        },
         "answers": {
           ".write": "auth != null && auth.uid === root.child('owner').val()",
           "$lesson": {
             "$task": {
               ".write": "root.child('rooms').child($room).child('lessons').child($lesson).child('tasks').child($task).exists()",
-              "text": { ".validate": "newData.isString() && newData.val().length < 5000" }
+              "text": {
+                ".validate": "newData.isString() && newData.val().length < 5000"
+              }
             }
           }
         },
         "presence": {
           ".write": "root.child('rooms').child($room).child('meta').exists()"
+        },
+        "open": {
+          ".write": "auth != null && auth.uid === root.child('owner').val()"
+        },
+        "check": {
+          ".write": "auth != null && auth.uid === root.child('owner').val()"
+        },
+        "done": {
+          "$lesson": {
+            ".write": "root.child('rooms').child($room).child('lessons').child($lesson).exists()"
+          },
+          ".write": "auth != null && auth.uid === root.child('owner').val()"
         }
       }
     }

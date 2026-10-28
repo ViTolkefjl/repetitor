@@ -7,13 +7,41 @@
       "title": "Кто это? Я, ты, он…",
       "text": "Эти слова заменяют имена, чтобы не повторяться: вместо «Том» говорим «он», вместо «Мэри» — «она».",
       "table": [
-        { "pic": "🐱", "en": "I", "ru": "я" },
-        { "pic": "🐱🐱", "en": "we", "ru": "мы" },
-        { "pic": "😺👉", "en": "you", "ru": "ты, вы" },
-        { "pic": "🐈", "en": "he", "ru": "он" },
-        { "pic": "🐱🎀", "en": "she", "ru": "она" },
-        { "pic": "⚽", "en": "it", "ru": "оно — предмет или животное" },
-        { "pic": "🐱🐱🐱", "en": "they", "ru": "они" }
+        {
+          "pic": "🐱",
+          "en": "I",
+          "ru": "я"
+        },
+        {
+          "pic": "🐱🐱",
+          "en": "we",
+          "ru": "мы"
+        },
+        {
+          "pic": "😺👉",
+          "en": "you",
+          "ru": "ты, вы"
+        },
+        {
+          "pic": "🐈",
+          "en": "he",
+          "ru": "он"
+        },
+        {
+          "pic": "🐱🎀",
+          "en": "she",
+          "ru": "она"
+        },
+        {
+          "pic": "⚽",
+          "en": "it",
+          "ru": "оно — предмет или животное"
+        },
+        {
+          "pic": "🐱🐱🐱",
+          "en": "they",
+          "ru": "они"
+        }
       ],
       "note": "he, she — человек или питомец\nit — предмет или животное"
     },
@@ -23,11 +51,52 @@
       "title": "Чем заменить?",
       "text": "Нажми на слово, которым можно заменить имя.",
       "items": [
-        { "q": "Tom → ___", "pic": "👦", "options": ["he", "she", "it"], "a": "he" },
-        { "q": "Mary → ___", "pic": "👧", "options": ["he", "she", "they"], "a": "she" },
-        { "q": "The ball → ___", "pic": "⚽", "options": ["it", "we", "they"], "a": "it" },
-        { "q": "Tom and Mary → ___", "pic": "👦👧", "options": ["he", "it", "they"], "a": "they" }
-      ]
+        {
+          "q": "Tom → ___",
+          "pic": "👦",
+          "options": [
+            "he",
+            "she",
+            "it"
+          ],
+          "a": "he",
+          "why": "Том — это один мальчик."
+        },
+        {
+          "q": "Mary → ___",
+          "pic": "👧",
+          "options": [
+            "he",
+            "she",
+            "they"
+          ],
+          "a": "she",
+          "why": "Мэри — это девочка."
+        },
+        {
+          "q": "The ball → ___",
+          "pic": "⚽",
+          "options": [
+            "it",
+            "we",
+            "they"
+          ],
+          "a": "it",
+          "why": "Мяч — это предмет, а не человек."
+        },
+        {
+          "q": "Tom and Mary → ___",
+          "pic": "👦👧",
+          "options": [
+            "he",
+            "it",
+            "they"
+          ],
+          "a": "they",
+          "why": "Их двое. Посмотри в правиле ★, какое слово для нескольких."
+        }
+      ],
+      "why": "he — мальчик или мужчина, she — девочка или женщина, it — предмет или животное, they — когда их несколько."
     },
     {
       "subject": "Английский",
@@ -35,13 +104,32 @@
       "title": "Соедини слово с переводом",
       "text": "Перетащи перевод к английскому слову.",
       "pairs": [
-        { "l": "I", "r": "я" },
-        { "l": "we", "r": "мы" },
-        { "l": "you", "r": "ты, вы" },
-        { "l": "he", "r": "он" },
-        { "l": "she", "r": "она" },
-        { "l": "they", "r": "они" }
-      ]
+        {
+          "l": "I",
+          "r": "я"
+        },
+        {
+          "l": "we",
+          "r": "мы"
+        },
+        {
+          "l": "you",
+          "r": "ты, вы"
+        },
+        {
+          "l": "he",
+          "r": "он"
+        },
+        {
+          "l": "she",
+          "r": "она"
+        },
+        {
+          "l": "they",
+          "r": "они"
+        }
+      ],
+      "why": "Подсмотри в первую карточку-правило ★ с котиками."
     },
     {
       "subject": "Английский",
@@ -49,13 +137,41 @@
       "title": "Кого? Кому? Me, him, them",
       "text": "После глагола («люблю», «вижу») слова меняются: не «я», а «меня» — Mum loves ME.",
       "table": [
-        { "en": "I → me", "ru": "мне, меня", "ex": "Mum loves me." },
-        { "en": "we → us", "ru": "нам, нас", "ex": "Look at us!" },
-        { "en": "you → you", "ru": "тебе, вам", "ex": "I see you." },
-        { "en": "he → him", "ru": "ему, его", "ex": "I help him." },
-        { "en": "she → her", "ru": "ей, её", "ex": "I know her." },
-        { "en": "it → it", "ru": "его, её", "ex": "Take it!" },
-        { "en": "they → them", "ru": "им, их", "ex": "I like them." }
+        {
+          "en": "I → me",
+          "ru": "мне, меня",
+          "ex": "Mum loves me."
+        },
+        {
+          "en": "we → us",
+          "ru": "нам, нас",
+          "ex": "Look at us!"
+        },
+        {
+          "en": "you → you",
+          "ru": "тебе, вам",
+          "ex": "I see you."
+        },
+        {
+          "en": "he → him",
+          "ru": "ему, его",
+          "ex": "I help him."
+        },
+        {
+          "en": "she → her",
+          "ru": "ей, её",
+          "ex": "I know her."
+        },
+        {
+          "en": "it → it",
+          "ru": "его, её",
+          "ex": "Take it!"
+        },
+        {
+          "en": "they → them",
+          "ru": "им, их",
+          "ex": "I like them."
+        }
       ]
     },
     {
@@ -64,12 +180,43 @@
       "title": "Перетащи нужное слово",
       "text": "Одно слово лишнее.",
       "items": [
-        { "q": "Mum loves ___.", "tr": "Мама любит меня.", "pic": "🐱❤️", "a": "me" },
-        { "q": "Look at ___!", "tr": "Посмотри на нас!", "pic": "🐱🐱", "a": "us" },
-        { "q": "I help ___.", "tr": "Я помогаю ему.", "pic": "🐈", "a": "him" },
-        { "q": "I like ___.", "tr": "Они мне нравятся.", "pic": "🐱🐱🐱", "a": "them" }
+        {
+          "q": "Mum loves ___.",
+          "tr": "Мама любит меня.",
+          "pic": "🐱❤️",
+          "a": "me",
+          "why": "Мама любит кого? — меня. Найди «меня» в таблице «Кого? Кому?»."
+        },
+        {
+          "q": "Look at ___!",
+          "tr": "Посмотри на нас!",
+          "pic": "🐱🐱",
+          "a": "us",
+          "why": "Посмотри на кого? — на нас. Найди «нас» в таблице."
+        },
+        {
+          "q": "I help ___.",
+          "tr": "Я помогаю ему.",
+          "pic": "🐈",
+          "a": "him",
+          "why": "Помогаю кому? — ему. Найди «ему» в таблице."
+        },
+        {
+          "q": "I like ___.",
+          "tr": "Они мне нравятся.",
+          "pic": "🐱🐱🐱",
+          "a": "them",
+          "why": "Нравятся они — значит, «их». Найди «им, их» в таблице."
+        }
       ],
-      "bank": ["me", "us", "him", "them", "her"]
+      "bank": [
+        "me",
+        "us",
+        "him",
+        "them",
+        "her"
+      ],
+      "why": "После глагола («любит», «помогаю», «посмотри на») слова меняются: me, us, him, her, them."
     },
     {
       "subject": "Английский",
@@ -77,12 +224,36 @@
       "title": "Чей? My и mine",
       "text": "Whose? — Чей? Отвечаем двумя способами: my + слово (my cat) или mine без слова в конце (The cat is mine).",
       "table": [
-        { "en": "my / mine", "ru": "мой", "ex": "my cat — The cat is mine." },
-        { "en": "our / ours", "ru": "наш", "ex": "our house — The house is ours." },
-        { "en": "your / yours", "ru": "твой, ваш", "ex": "your bag — The bag is yours." },
-        { "en": "his / his", "ru": "его", "ex": "his dog — The dog is his." },
-        { "en": "her / hers", "ru": "её", "ex": "her book — The book is hers." },
-        { "en": "their / theirs", "ru": "их", "ex": "their car — The car is theirs." }
+        {
+          "en": "my / mine",
+          "ru": "мой",
+          "ex": "my cat — The cat is mine."
+        },
+        {
+          "en": "our / ours",
+          "ru": "наш",
+          "ex": "our house — The house is ours."
+        },
+        {
+          "en": "your / yours",
+          "ru": "твой, ваш",
+          "ex": "your bag — The bag is yours."
+        },
+        {
+          "en": "his / his",
+          "ru": "его",
+          "ex": "his dog — The dog is his."
+        },
+        {
+          "en": "her / hers",
+          "ru": "её",
+          "ex": "her book — The book is hers."
+        },
+        {
+          "en": "their / theirs",
+          "ru": "их",
+          "ex": "their car — The car is theirs."
+        }
       ],
       "note": "my, our, your… — слово стоит ПЕРЕД предметом\nmine, ours, yours… — слово стоит В КОНЦЕ"
     },
@@ -92,13 +263,80 @@
       "title": "Выбери слово",
       "text": "Смотри на картинку и перевод. Кто делает? Кого видят? Чьё это?",
       "items": [
-        { "q": "___ like cats.", "tr": "Мы любим кошек.", "pic": "🐱🐱", "options": ["We", "Us", "Our"], "a": "We" },
-        { "q": "Mum loves ___.", "tr": "Мама любит меня.", "pic": "🐱❤️", "options": ["I", "me", "my"], "a": "me" },
-        { "q": "This is ___ ball.", "tr": "Это их мяч.", "pic": "🐱⚽🐱", "options": ["they", "them", "their"], "a": "their" },
-        { "q": "Look at ___!", "tr": "Посмотри на него!", "pic": "🐈👀", "options": ["he", "him", "his"], "a": "him" },
-        { "q": "The red bag is ___.", "tr": "Красная сумка — её.", "pic": "🐱👜", "options": ["her", "she", "hers"], "a": "hers" },
-        { "q": "___ is a pupil.", "tr": "Она школьница.", "pic": "🐱📖", "options": ["She", "Her", "Hers"], "a": "She" }
-      ]
+        {
+          "q": "___ like cats.",
+          "tr": "Мы любим кошек.",
+          "pic": "🐱🐱",
+          "options": [
+            "We",
+            "Us",
+            "Our"
+          ],
+          "a": "We",
+          "why": "Кто любит кошек? — мы. Слово стоит в начале, перед глаголом."
+        },
+        {
+          "q": "Mum loves ___.",
+          "tr": "Мама любит меня.",
+          "pic": "🐱❤️",
+          "options": [
+            "I",
+            "me",
+            "my"
+          ],
+          "a": "me",
+          "why": "Мама любит кого? — меня. После глагола слово меняется."
+        },
+        {
+          "q": "This is ___ ball.",
+          "tr": "Это их мяч.",
+          "pic": "🐱⚽🐱",
+          "options": [
+            "they",
+            "them",
+            "their"
+          ],
+          "a": "their",
+          "why": "Чей мяч? — их. Перед предметом нужно слово «чей»."
+        },
+        {
+          "q": "Look at ___!",
+          "tr": "Посмотри на него!",
+          "pic": "🐈👀",
+          "options": [
+            "he",
+            "him",
+            "his"
+          ],
+          "a": "him",
+          "why": "Посмотри на кого? — на него. После at слово тоже меняется."
+        },
+        {
+          "q": "The red bag is ___.",
+          "tr": "Красная сумка — её.",
+          "pic": "🐱👜",
+          "options": [
+            "her",
+            "she",
+            "hers"
+          ],
+          "a": "hers",
+          "why": "Чья сумка? — её. Слово стоит в конце, после него нет предмета."
+        },
+        {
+          "q": "___ is a pupil.",
+          "tr": "Она школьница.",
+          "pic": "🐱📖",
+          "options": [
+            "She",
+            "Her",
+            "Hers"
+          ],
+          "a": "She",
+          "why": "Кто школьница? — она. Это тот, кто делает, — начало предложения."
+        }
+      ],
+      "why": "Кто делает — I, we, he, she, they. Кого — me, us, him, her, them. Чей + предмет — my, our, his, her, their. Чей в конце — mine, ours, hers, theirs."
     },
     {
       "subject": "Английский",
@@ -106,11 +344,28 @@
       "title": "Собери предложение",
       "text": "Нажимай на слова по порядку или перетаскивай их на строчку.",
       "items": [
-        { "a": "Mum loves me.", "tr": "Мама любит меня.", "pic": "🐱❤️" },
-        { "a": "The cat is mine.", "tr": "Кошка — моя.", "pic": "🐈" },
-        { "a": "This is my ball.", "tr": "Это мой мяч.", "pic": "⚽" },
-        { "a": "They like cats.", "tr": "Они любят кошек.", "pic": "🐱🐱🐱" }
-      ]
+        {
+          "a": "Mum loves me.",
+          "tr": "Мама любит меня.",
+          "pic": "🐱❤️"
+        },
+        {
+          "a": "The cat is mine.",
+          "tr": "Кошка — моя.",
+          "pic": "🐈"
+        },
+        {
+          "a": "This is my ball.",
+          "tr": "Это мой мяч.",
+          "pic": "⚽"
+        },
+        {
+          "a": "They like cats.",
+          "tr": "Они любят кошек.",
+          "pic": "🐱🐱🐱"
+        }
+      ],
+      "why": "В английском порядок строгий: сначала КТО, потом ЧТО ДЕЛАЕТ, потом КОГО или ЧТО."
     },
     {
       "subject": "Английский",
@@ -118,17 +373,72 @@
       "title": "Слова-подсказки",
       "text": "Эти слова — как знаки на дороге: увидел — и сразу ясно, что выбрать: Simple (обычно) или Continuous (сейчас).",
       "table": [
-        { "pic": "📅", "en": "always", "ru": "всегда", "ex": "Simple" },
-        { "pic": "📅", "en": "usually", "ru": "обычно", "ex": "Simple" },
-        { "pic": "📅", "en": "often", "ru": "часто", "ex": "Simple" },
-        { "pic": "📅", "en": "sometimes", "ru": "иногда", "ex": "Simple" },
-        { "pic": "📅", "en": "never", "ru": "никогда", "ex": "Simple" },
-        { "pic": "📅", "en": "every day", "ru": "каждый день", "ex": "Simple" },
-        { "pic": "⏰", "en": "now", "ru": "сейчас", "ex": "Continuous" },
-        { "pic": "⏰", "en": "at the moment", "ru": "в данный момент", "ex": "Continuous" },
-        { "pic": "⏰", "en": "Look!", "ru": "смотри!", "ex": "Continuous" },
-        { "pic": "⏰", "en": "Listen!", "ru": "слушай!", "ex": "Continuous" },
-        { "pic": "⏰", "en": "today", "ru": "сегодня", "ex": "Continuous" }
+        {
+          "pic": "📅",
+          "en": "always",
+          "ru": "всегда",
+          "ex": "Simple"
+        },
+        {
+          "pic": "📅",
+          "en": "usually",
+          "ru": "обычно",
+          "ex": "Simple"
+        },
+        {
+          "pic": "📅",
+          "en": "often",
+          "ru": "часто",
+          "ex": "Simple"
+        },
+        {
+          "pic": "📅",
+          "en": "sometimes",
+          "ru": "иногда",
+          "ex": "Simple"
+        },
+        {
+          "pic": "📅",
+          "en": "never",
+          "ru": "никогда",
+          "ex": "Simple"
+        },
+        {
+          "pic": "📅",
+          "en": "every day",
+          "ru": "каждый день",
+          "ex": "Simple"
+        },
+        {
+          "pic": "⏰",
+          "en": "now",
+          "ru": "сейчас",
+          "ex": "Continuous"
+        },
+        {
+          "pic": "⏰",
+          "en": "at the moment",
+          "ru": "в данный момент",
+          "ex": "Continuous"
+        },
+        {
+          "pic": "⏰",
+          "en": "Look!",
+          "ru": "смотри!",
+          "ex": "Continuous"
+        },
+        {
+          "pic": "⏰",
+          "en": "Listen!",
+          "ru": "слушай!",
+          "ex": "Continuous"
+        },
+        {
+          "pic": "⏰",
+          "en": "today",
+          "ru": "сегодня",
+          "ex": "Continuous"
+        }
       ],
       "note": "📅 Present Simple — обычно, каждый день\n⏰ Present Continuous — прямо сейчас"
     },
@@ -137,17 +447,45 @@
       "type": "sort",
       "title": "Какое «время»? Разложи слова",
       "text": "Перетащи каждое слово в свою коробку.",
-      "groups": ["📅 Simple — обычно", "⏰ Continuous — сейчас"],
+      "groups": [
+        "📅 Simple — обычно",
+        "⏰ Continuous — сейчас"
+      ],
       "words": [
-        { "w": "now", "g": "⏰ Continuous — сейчас" },
-        { "w": "always", "g": "📅 Simple — обычно" },
-        { "w": "Look!", "g": "⏰ Continuous — сейчас" },
-        { "w": "never", "g": "📅 Simple — обычно" },
-        { "w": "at the moment", "g": "⏰ Continuous — сейчас" },
-        { "w": "every day", "g": "📅 Simple — обычно" },
-        { "w": "Listen!", "g": "⏰ Continuous — сейчас" },
-        { "w": "sometimes", "g": "📅 Simple — обычно" }
-      ]
+        {
+          "w": "now",
+          "g": "⏰ Continuous — сейчас"
+        },
+        {
+          "w": "always",
+          "g": "📅 Simple — обычно"
+        },
+        {
+          "w": "Look!",
+          "g": "⏰ Continuous — сейчас"
+        },
+        {
+          "w": "never",
+          "g": "📅 Simple — обычно"
+        },
+        {
+          "w": "at the moment",
+          "g": "⏰ Continuous — сейчас"
+        },
+        {
+          "w": "every day",
+          "g": "📅 Simple — обычно"
+        },
+        {
+          "w": "Listen!",
+          "g": "⏰ Continuous — сейчас"
+        },
+        {
+          "w": "sometimes",
+          "g": "📅 Simple — обычно"
+        }
+      ],
+      "why": "Simple — то, что бывает обычно: всегда, иногда, каждый день. Continuous — то, что происходит прямо сейчас."
     },
     {
       "subject": "Английский",
@@ -155,9 +493,31 @@
       "title": "И в предложениях",
       "text": "Найди слово-подсказку и выбери, как сказать.",
       "items": [
-        { "q": "She ___ every day.", "tr": "Она читает каждый день.", "pic": "🐱📖", "options": ["reads", "is reading"], "a": "reads" },
-        { "q": "Look! He ___ now.", "tr": "Смотри! Он читает сейчас.", "pic": "🐈📖", "options": ["reads", "is reading"], "a": "is reading" }
-      ]
+        {
+          "q": "She ___ every day.",
+          "tr": "Она читает каждый день.",
+          "pic": "🐱📖",
+          "options": [
+            "reads",
+            "is reading"
+          ],
+          "a": "reads",
+          "why": "every day — это «обычно» или «прямо сейчас»?"
+        },
+        {
+          "q": "Look! He ___ now.",
+          "tr": "Смотри! Он читает сейчас.",
+          "pic": "🐈📖",
+          "options": [
+            "reads",
+            "is reading"
+          ],
+          "a": "is reading",
+          "why": "Look! и now — это «обычно» или «прямо сейчас»?"
+        }
+      ],
+      "why": "Найди слово-подсказку в предложении и посмотри на лист «Слова-подсказки» ★."
     }
-  ]
+  ],
+  "subject": "Английский"
 }

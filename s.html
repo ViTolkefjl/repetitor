@@ -11,16 +11,20 @@
   <div class="empty-state"><h1>Загружаю…</h1><p class="muted">Если долго — проверь, что включён VPN.</p></div>
 </main>
 <div class="netline hide" id="net">Нет связи. Проверь интернет и VPN — ответы сохранятся, когда связь вернётся.</div>
+<div class="toast hide" id="toast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-database-compat.js"></script>
 <script src="common.js"></script>
 <script src="english.js"></script>
+<script src="notebook.js"></script>
 <script>
 (function () {
-  const { db, now, TS, esc, sortedTasks, isTask } = REP;
+  const { db, now, TS, esc, sortedTasks, isTask, check, dec, status, finished } = REP;
   const app = document.getElementById('app');
-  const room = new URLSearchParams(location.hash.slice(1)).get('k');
+  const hash = () => new URLSearchParams(location.hash.slice(1));
+  const room = hash().get('k');
+  const GAP = /_{2,}/g;
 
   if (!room || room.length < 16) {
     app.innerHTML = '<div class="empty-state"><h1>Нужна ссылка от учителя</h1><p class="muted">Открой страницу по ссылке, которую прислал Виталий.</p></div>';
@@ -28,22 +32,26 @@
   }
 
   const R = db.ref('rooms/' + room);
-  let lessonId = null, lesson = null, tasks = [], answers = {}, marks = {};
-  let focusTask = null;
-  const lastInput = {};           // taskId -> время последнего ввода (для подсчёта активного времени)
+  let lessons = {}, open = {}, done = {}, allMarks = {}, allAnswers = {}, current = null;
+  let viewId = null, lesson = null, tasks = [], answers = {}, marks = {}, keys = {};
+  let focusTask = null, loaded = { lessons: false, open: false };
+  const lastInput = {};             // taskId -> время последнего ввода (для подсчёта активного времени)
+  let viewUnsubs = [];
+
+  function toast(msg) {
+    const t = document.getElementById('toast'); t.textContent = msg; t.classList.remove('hide');
+    clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('hide'), 3500);
+  }
+  function listen(ref, cb) { const h = ref.on('value', cb); return () => ref.off('value', h); }
 
   /* ---------- присутствие ---------- */
   const pres = R.child('presence');
   let netTimer = null;
-  function presence(extra) {
-    pres.update(Object.assign({
-      online: true,
-      visible: !document.hidden,
-      focus: document.hasFocus(),
-      lesson: lessonId || '',
-      task: focusTask || '',
-      t: TS
-    }, extra || {})).catch(() => {});
+  function presence() {
+    pres.update({
+      online: true, visible: !document.hidden, focus: document.hasFocus(),
+      lesson: viewId || '', task: focusTask || '', t: TS
+    }).catch(() => {});
   }
   db.ref('.info/connected').on('value', s => {
     const on = !!s.val();
@@ -57,65 +65,140 @@
       netTimer = setTimeout(() => document.getElementById('net').classList.remove('hide'), 3000);
     }
   });
-  document.addEventListener('visibilitychange', () => presence());
-  window.addEventListener('focus', () => presence());
-  window.addEventListener('blur', () => presence());
-  setInterval(() => presence(), 30000);
+  document.addEventListener('visibilitychange', presence);
+  window.addEventListener('focus', presence);
+  window.addEventListener('blur', presence);
+  setInterval(presence, 30000);
 
-  /* ---------- текущее занятие ---------- */
-  R.child('current').on('value', s => {
-    const id = s.val();
-    if (id === lessonId) return;
-    if (lessonId) {
-      R.child('lessons/' + lessonId).off();
-      R.child('marks/' + lessonId).off();
+  /* ---------- какие блоки открыты ---------- */
+  const openIds = () => {
+    const ids = Object.keys(open).filter(id => open[id] && lessons[id]);
+    if (current && lessons[current] && !ids.includes(current)) ids.push(current); // старый формат: одно занятие
+    return ids.sort((a, b) => (lessons[a].created || 0) - (lessons[b].created || 0));
+  };
+  let knownOpen = null;
+  function onListChange() {
+    if (!loaded.lessons || !loaded.open) return;
+    const ids = openIds();
+    if (knownOpen && viewId) {
+      const added = ids.filter(id => !knownOpen.includes(id));
+      if (added.length) toast('Учитель добавил: ' + added.map(id => lessons[id].title || 'новый блок').join(', '));
     }
-    lessonId = id; lesson = null; marks = {}; answers = {};
-    if (!id) { renderEmpty(); presence(); return; }
-    R.child('answers/' + id).once('value').then(a => {
-      if (lessonId !== id) return;
-      answers = a.val() || {};
-      R.child('lessons/' + id).on('value', l => { lesson = l.val(); build(); });
-      R.child('marks/' + id).on('value', m => { marks = m.val() || {}; paintMarks(); });
-    });
-    presence();
-  }, err => {
+    knownOpen = ids;
+    if (viewId && !ids.includes(viewId)) { goHome(); return; }
+    if (!viewId) {
+      const want = hash().get('l');
+      if (want && ids.includes(want)) return openLesson(want);
+      renderHome();
+    }
+  }
+  R.child('lessons').on('value', s => {
+    lessons = s.val() || {}; loaded.lessons = true;
+    if (viewId && lessons[viewId]) { lesson = lessons[viewId]; build(); }
+    onListChange();
+  }, () => {
     app.innerHTML = '<div class="empty-state"><h1>Ссылка не работает</h1><p class="muted">Попроси у Виталия новую ссылку.</p></div>';
   });
+  R.child('open').on('value', s => { open = s.val() || {}; loaded.open = true; onListChange(); });
+  R.child('current').on('value', s => { current = s.val(); onListChange(); });
+  R.child('done').on('value', s => { done = s.val() || {}; if (!viewId) renderHome(); else paintFinish(); });
+  R.child('marks').on('value', s => { allMarks = s.val() || {}; if (!viewId) renderHome(); });
+  R.child('answers').on('value', s => { allAnswers = s.val() || {}; if (!viewId) renderHome(); });
 
-  function renderEmpty() {
-    app.innerHTML = '<div class="empty-state"><h1>Заданий пока нет</h1><p class="muted">Как только учитель добавит домашку, она появится здесь сама.</p></div>';
+  /* ---------- главный экран: блоки ---------- */
+  const ICON = [[/англ/i, '🇬🇧'], [/матем/i, '➗'], [/рус/i, '📝'], [/чтен|литер/i, '📖'], [/окруж|мир/i, '🌍']];
+  const subjectOf = l => l.subject || (sortedTasks(l).find(t => t.subject) || {}).subject || '';
+  const iconOf = l => { const s = subjectOf(l) + ' ' + (l.title || ''); const f = ICON.find(([re]) => re.test(s)); return f ? f[1] : '📘'; };
+  function progress(id) {
+    const ts = sortedTasks(lessons[id]).filter(isTask);
+    const A = allAnswers[id] || {}, M = allMarks[id] || {};
+    const ok = ts.filter(t => finished(status(t, A[t.id], M[t.id]))).length;
+    const started = ts.some(t => A[t.id]);
+    return { ok, n: ts.length, started };
   }
 
-  /* ---------- сборка страницы ---------- */
+  function renderHome() {
+    if (!loaded.lessons || !loaded.open || viewId) return;
+    const ids = openIds();
+    if (!ids.length) {
+      app.innerHTML = '<div class="empty-state"><h1>Заданий пока нет</h1><p class="muted">Как только учитель добавит домашку, она появится здесь сама.</p></div>';
+      return;
+    }
+    const left = ids.filter(id => !done[id]).length;
+    app.innerHTML = '<header class="s-head"><h1>' + (left ? 'Выбери, с чего начнём' : 'Всё сделано! 🎉') + '</h1></header>'
+      + '<div class="blocks">' + ids.map(id => {
+        const l = lessons[id], p = progress(id), d = !!done[id];
+        const st = d ? 'Завершено ✓' : p.started ? 'Готово ' + p.ok + ' из ' + p.n : (p.n ? 'Заданий: ' + p.n : 'Пока пусто');
+        return '<button class="block' + (d ? ' done' : '') + '" data-open="' + id + '">'
+          + '<span class="b-icon" aria-hidden="true">' + iconOf(l) + '</span>'
+          + '<span class="b-body"><span class="b-title">' + esc(l.title || 'Занятие') + '</span><span class="b-st">' + st + '</span>'
+          + '<span class="b-bar"><i style="width:' + (p.n ? Math.round(100 * p.ok / p.n) : 0) + '%"></i></span></span></button>';
+      }).join('') + '</div>';
+    app.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openLesson(b.dataset.open));
+  }
+
+  function setHash(l) {
+    const h = 'k=' + room + (l ? '&l=' + l : '');
+    if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h);
+  }
+
+  function goHome() {
+    viewUnsubs.forEach(f => f()); viewUnsubs = [];
+    viewId = null; lesson = null; focusTask = null;
+    setHash(null); presence(); window.scrollTo(0, 0);
+    renderHome();
+  }
+
+  function openLesson(id) {
+    viewUnsubs.forEach(f => f()); viewUnsubs = [];
+    viewId = id; lesson = lessons[id]; answers = {}; marks = {}; keys = {};
+    setHash(id); presence(); window.scrollTo(0, 0);
+    app.innerHTML = '<div class="empty-state"><h1>Открываю…</h1></div>';
+    Promise.all([R.child('answers/' + id).once('value'), R.child('check/' + id).once('value')]).then(([a, k]) => {
+      if (viewId !== id) return;
+      answers = a.val() || {};
+      keys = k.val() || {};
+      build();
+      viewUnsubs = [
+        listen(R.child('marks/' + id), m => { marks = m.val() || {}; paintAll(); }),
+        listen(R.child('check/' + id), k2 => { keys = k2.val() || {}; })
+      ];
+    });
+  }
+
+  /* ---------- экран блока ---------- */
   function build() {
-    if (!lesson) { renderEmpty(); return; }
+    if (!lesson || !viewId) return;
     tasks = sortedTasks(lesson);
     const ae = document.activeElement;
     const active = ae && ae.dataset && ae.dataset.key;
     let sel = null;
     try { sel = active ? [ae.selectionStart, ae.selectionEnd] : null; } catch (e) {}
+    const y = window.scrollY;
 
-    let html = '<header class="s-head"><h1>' + esc(lesson.title || 'Домашка') + '</h1><div class="dots" id="dots" aria-label="Прогресс"></div></header>';
+    let html = '<button class="btn plain back" id="back">← Все задания</button>'
+      + '<header class="s-head"><h1>' + esc(lesson.title || 'Домашка') + '</h1><div class="dots" id="dots" aria-label="Прогресс"></div></header>';
     if (!tasks.length) html += '<p class="muted">Учитель ещё добавляет задания — они появятся здесь сами.</p>';
-    const written = tasks.some(t => ['short', 'steps', 'letters'].includes(t.type));
-    html += '<div class="banner hide" id="done">' + (written ? 'Всё верно! Теперь аккуратно перепиши в тетрадь ✍️' : 'Всё верно! Урок пройден, молодец 🎉') + '</div>';
     let num = 0;
-    tasks.forEach((t, i) => {
+    tasks.forEach(t => {
       const th = t.type === 'theory';
       if (!th) num++;
       html += '<section class="sheet' + (th ? ' theory' : '') + '" data-task="' + t.id + '">'
         + '<div class="margin">' + (th ? '<span class="star" title="Правило">★</span>' : num) + '</div>'
         + (t.subject ? '<span class="subject">' + esc(t.subject) + '</span>' : '')
-        + '<h2 class="task-title">' + esc(t.title || ('Задание ' + (i + 1))) + '</h2>'
+        + '<h2 class="task-title">' + esc(t.title || ('Задание ' + num)) + '</h2>'
         + (t.type !== 'letters' && t.type !== 'theory' && t.text ? '<p class="task-text">' + esc(t.text) + '</p>' : '')
         + (t.type === 'letters' && t.note ? '<p class="task-text">' + esc(t.note) + '</p>' : '')
         + (t.hint ? '<button class="btn light small hint-btn" data-hint="' + t.id + '">Подсказка</button><div class="hint hide" id="hint-' + t.id + '">' + esc(t.hint) + '</div>' : '')
         + field(t)
-        + '<div class="mark hide" id="mark-' + t.id + '"></div>'
+        + (th ? '' : '<div class="fb hide" id="fb-' + t.id + '"></div>'
+          + '<div class="t-foot"><button class="btn" data-check="' + t.id + '">Проверить</button><span class="t-msg" id="msg-' + t.id + '"></span></div>'
+          + '<div class="nb-box hide" id="nb-' + t.id + '"></div>')
         + '</section>';
     });
+    html += '<div class="finish" id="finish"></div>';
     app.innerHTML = html;
+    document.getElementById('back').onclick = goHome;
 
     tasks.filter(t => EN.TYPES.includes(t.type)).forEach(t => {
       const sec = app.querySelector('[data-task="' + t.id + '"]');
@@ -123,7 +206,7 @@
         const a = answers[t.id] = answers[t.id] || {};
         a.parts = parts; a.text = text;
         save(t.id, a);
-      }, () => !!(marks[t.id] && marks[t.id].s === 'ok'));
+      }, () => locked(t));
     });
 
     app.querySelectorAll('[data-key]').forEach(el => {
@@ -134,17 +217,18 @@
     app.querySelectorAll('input[data-key]').forEach(el => el.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
-      const all = Array.from(app.querySelectorAll('[data-key]:not([readonly])'));
+      const sec = el.closest('[data-task]');
+      const all = Array.from(sec.querySelectorAll('[data-key]:not([readonly])'));
       const nx = all[all.indexOf(el) + 1];
-      if (nx) nx.focus(); else el.blur();
+      if (nx) nx.focus(); else { const b = sec.querySelector('[data-check]'); b && b.focus(); }
     }));
     app.querySelectorAll('[data-hint]').forEach(b => b.addEventListener('click', () => {
       document.getElementById('hint-' + b.dataset.hint).classList.remove('hide');
       b.remove();
       (answers[b.dataset.hint] = answers[b.dataset.hint] || {}).hint = true;
-      R.child('answers/' + lessonId + '/' + b.dataset.hint).update({ hint: true });
+      R.child('answers/' + viewId + '/' + b.dataset.hint).update({ hint: true });
     }));
-    // открытые раньше подсказки
+    app.querySelectorAll('[data-check]').forEach(b => b.addEventListener('click', () => doCheck(b.dataset.check)));
     tasks.forEach(t => {
       if (answers[t.id] && answers[t.id].hint) {
         const h = document.getElementById('hint-' + t.id);
@@ -153,18 +237,20 @@
     });
     if (active) {
       const el = app.querySelector('[data-key="' + active + '"]');
-      if (el) { el.focus(); try { sel && el.setSelectionRange(sel[0], sel[1]); } catch (e) {} }
+      if (el) { el.focus({ preventScroll: true }); try { sel && el.setSelectionRange(sel[0], sel[1]); } catch (e) {} }
     }
-    paintMarks();
+    window.scrollTo(0, y);
+    paintAll();
   }
 
   function field(t) {
     const a = answers[t.id] || {};
     if (EN.TYPES.includes(t.type)) return EN.html(t, a);
+    const attrs = ' autocapitalize="off" spellcheck="false" autocorrect="off" autocomplete="off"';
     if (t.type === 'short' && Array.isArray(t.items)) {
       return '<div class="items">' + t.items.map((it, i) =>
-        '<label class="item"><span class="q">' + esc(it.q) + '</span>'
-        + '<input class="answer-in" data-key="' + t.id + ':' + i + '" autocapitalize="off" spellcheck="false" autocorrect="off" autocomplete="off" value="' + esc((a.parts || [])[i] || '') + '"></label>'
+        '<div class="item-wrap"><label class="item"><span class="q">' + esc(it.q) + '</span>'
+        + '<input class="answer-in" data-key="' + t.id + ':' + i + '"' + attrs + ' value="' + esc((a.parts || [])[i] || '') + '"></label></div>'
       ).join('') + '</div>';
     }
     if (t.type === 'letters') {
@@ -172,19 +258,19 @@
       const parts = a.parts || [];
       const html = esc(t.text || '').replace(/_/g, () => {
         const i = n++;
-        return '<input class="gap" maxlength="2" data-key="' + t.id + ':' + i + '" autocapitalize="off" spellcheck="false" autocorrect="off" autocomplete="off" aria-label="Пропуск ' + (i + 1) + '" value="' + esc(parts[i] || '') + '">';
+        return '<input class="gap" maxlength="2" data-key="' + t.id + ':' + i + '"' + attrs + ' aria-label="Пропуск ' + (i + 1) + '" value="' + esc(parts[i] || '') + '">';
       });
       return '<div class="letters">' + html + '</div>';
     }
     if (t.type === 'steps') {
-      return '<textarea class="answer-in" data-key="' + t.id + '" spellcheck="false" autocorrect="off" autocomplete="off" placeholder="Пиши решение по шагам…">' + esc(a.text || '') + '</textarea>';
+      return '<textarea class="answer-in" data-key="' + t.id + '"' + attrs + ' placeholder="Пиши решение по шагам…">' + esc(a.text || '') + '</textarea>';
     }
-    return '<input class="answer-in" data-key="' + t.id + '" autocapitalize="off" spellcheck="false" autocorrect="off" autocomplete="off" placeholder="Ответ" value="' + esc(a.text || '') + '">';
+    return '<input class="answer-in" data-key="' + t.id + '"' + attrs + ' placeholder="Ответ" value="' + esc(a.text || '') + '">';
   }
 
-  // в пропусках: после буквы — к следующему пропуску, Backspace в пустом — к предыдущему
+  // в пропусках: Backspace в пустом — к предыдущему
   function gapKeys(e) {
-    const gaps = Array.from(app.querySelectorAll('.gap:not([readonly])'));
+    const gaps = Array.from(e.target.closest('.letters').querySelectorAll('.gap:not([readonly])'));
     const i = gaps.indexOf(e.target);
     if (e.key === 'Backspace' && !e.target.value && i > 0) { e.preventDefault(); gaps[i - 1].focus(); }
   }
@@ -196,7 +282,6 @@
     const t = tasks.find(x => x.id === taskId);
     if (!t) return;
     const a = answers[taskId] = answers[taskId] || {};
-
     if (t.type === 'letters') {
       if (el.value.length > 1) el.value = el.value.slice(-1);
       const gaps = Array.from(el.closest('.letters').querySelectorAll('.gap'));
@@ -204,9 +289,8 @@
       let n = 0;
       a.text = (t.text || '').replace(/_/g, () => a.parts[n++] || '_');
       if (el.value) {
-        const all = Array.from(app.querySelectorAll('.gap:not([readonly])'));
-        const nx = all[all.indexOf(el) + 1];
-        if (nx && nx.closest('[data-task]') === el.closest('[data-task]')) nx.focus();
+        const nx = gaps.slice(gaps.indexOf(el) + 1).find(g => !g.readOnly);
+        if (nx) nx.focus();
       }
     } else if (t.type === 'short' && Array.isArray(t.items)) {
       const ins = Array.from(el.closest('.items').querySelectorAll('[data-key]'));
@@ -224,51 +308,222 @@
     const prev = lastInput[taskId];
     if (prev && n - prev < 60000) a.active = (a.active || 0) + (n - prev);
     lastInput[taskId] = n;
-
     if (focusTask !== taskId) { focusTask = taskId; presence(); }
-    const upd = { text: a.text, t: TS, start: a.start, active: a.active || 0 };
+    const upd = { text: a.text || '', t: TS, start: a.start, active: a.active || 0 };
     if (a.parts) upd.parts = a.parts;
-    R.child('answers/' + lessonId + '/' + taskId).update(upd);
+    R.child('answers/' + viewId + '/' + taskId).update(upd);
+    const msg = document.getElementById('msg-' + taskId);
+    if (msg) msg.textContent = '';
     paintDots();
   }
 
-  /* ---------- пометки учителя ---------- */
-  function paintMarks() {
-    if (!lesson) return;
-    tasks.forEach(t => {
-      const box = document.getElementById('mark-' + t.id);
-      if (!box) return;
-      const m = marks[t.id];
-      const sec = box.closest('.sheet');
-      sec.querySelectorAll('[data-key]').forEach(el => { el.readOnly = !!(m && m.s === 'ok'); });
-      if (sec._redraw) sec._redraw();
-      // перерисовываем только изменившуюся пометку, чтобы анимация «ручки» не повторялась на всех сразу
-      const sig = m ? m.s + '|' + (m.c || '') + '|' + m.t : '';
-      if (box.dataset.sig === sig) return;
-      box.dataset.sig = sig;
-      if (!m) { box.className = 'mark hide'; box.innerHTML = ''; return; }
-      box.className = 'mark ' + (m.s === 'ok' ? 'ok' : 'fix');
-      box.innerHTML = m.s === 'ok'
-        ? '<span class="sign">✓</span><span>Верно' + (m.c ? ' — ' + esc(m.c) : '') + '</span>'
-        : '<span class="sign">✗</span><span>Исправь' + (m.c ? ': ' + esc(m.c) : '') + '</span>';
+  /* ---------- самопроверка: лесенка подсказок ---------- */
+  const gapCount = t => (t.items || []).reduce((s, it) => s + ((it.q || '').match(GAP) || []).length, 0);
+  function filled(t, a) {
+    a = a || {};
+    const P = a.parts || [];
+    const all = n => n > 0 && P.length >= n && P.slice(0, n).every(p => p && String(p).trim());
+    switch (t.type) {
+      case 'letters': return all(((t.text || '').match(/_/g) || []).length);
+      case 'choice': return all((t.items || []).length);
+      case 'fill': return all(gapCount(t));
+      case 'match': return all((t.left || []).length);
+      case 'sort': return all((t.words || []).length);
+      case 'order': return (t.items || []).every((it, i) => String(P[i] || '').split(' ').filter(Boolean).length === (it.words || []).length);
+      default: return Array.isArray(t.items) ? all(t.items.length) : !!(a.text && a.text.trim());
+    }
+  }
+  const locked = t => ['ok', 'help', 'pending'].includes(status(t, answers[t.id], marks[t.id]));
+
+  function doCheck(id) {
+    const t = tasks.find(x => x.id === id);
+    const a = answers[id] = answers[id] || {};
+    const msg = document.getElementById('msg-' + id);
+    if (!filled(t, a)) {
+      msg.textContent = t.type === 'order' ? 'Сначала поставь все слова на строчку.' : t.type === 'steps' || (!t.items && t.type === 'short') ? 'Сначала напиши ответ.' : 'Сначала заполни все пропуски.';
+      return;
+    }
+    msg.textContent = '';
+    const key = keys[id] != null ? dec(keys[id]) : null;
+    const res = check(t, key, a);
+    const upd = { ct: TS };
+    if (key == null || key === '' || res.state === 'nokey') {
+      upd.res = 'pending'; upd.lvl = 0;
+    } else if (res.state === 'match') {
+      upd.res = t.type === 'steps' ? 'pending' : 'ok'; upd.lvl = 0; upd.fbp = null;
+    } else {
+      const tries = (a.tries || 0) + 1;
+      const parts = (res.parts || [res.state]).map(s => s === 'nokey' ? 'match' : s);
+      upd.tries = tries;
+      upd.lvl = Math.min(tries, 3);
+      upd.res = tries >= 3 ? 'help' : 'work';
+      upd.fbp = parts;
+      upd.fbk = parts.filter(s => s === 'match').length;
+      upd.fbn = parts.length;
+    }
+    Object.assign(a, upd, { ct: now() });
+    R.child('answers/' + viewId + '/' + id).update(upd);
+    paintTask(t, true);
+    paintDots(); paintFinish();
+  }
+
+  const plural = (n, one, few, many) => {
+    const m10 = n % 10, m100 = n % 100;
+    return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many;
+  };
+  function keyPart(t, key, i) {
+    if (Array.isArray(key)) return String(key[i] == null ? '' : key[i]).split('|')[0];
+    if (t.type === 'letters') { const L = REP.lettersFromKey(t.text || '', key); return L ? L[i] : key; }
+    return String(key).split('|')[0];
+  }
+  function whyOf(t, i) {
+    const it = (t.items || [])[i];
+    if (t.type === 'fill') {           // пропуск → предложение
+      let g = 0;
+      for (const x of t.items || []) { const c = ((x.q || '').match(GAP) || []).length; if (i < g + c) return x.why || t.why || ''; g += c; }
+    }
+    return (it && it.why) || t.why || '';
+  }
+
+  // элементы-пункты для подсветки
+  function itemsOf(sec, t) {
+    if (EN.TYPES.includes(t.type)) return EN.itemEls(sec, t);
+    if (t.type === 'letters') return Array.from(sec.querySelectorAll('.gap'));
+    if (t.type === 'short' && Array.isArray(t.items)) return Array.from(sec.querySelectorAll('.item-wrap'));
+    return [];
+  }
+  function whyPlace(el, t) {
+    if (EN.TYPES.includes(t.type)) return EN.whyHost(el, t);
+    if (t.type === 'short') return el;
+    return null;
+  }
+
+  function paintTask(t, fresh) {
+    const sec = app.querySelector('[data-task="' + t.id + '"]');
+    if (!sec || !isTask(t)) return;
+    const a = answers[t.id] || {}, m = marks[t.id];
+    const st = status(t, a, m);
+    const lock = ['ok', 'help', 'pending'].includes(st);
+    const box = document.getElementById('fb-' + t.id);
+    const btn = sec.querySelector('[data-check]');
+    const key = keys[t.id] != null ? dec(keys[t.id]) : null;
+
+    // сброс прошлой подсветки
+    sec.querySelectorAll('.fb-ok, .fb-bad').forEach(el => el.classList.remove('fb-ok', 'fb-bad'));
+    sec.querySelectorAll('.why, .right').forEach(el => el.remove());
+
+    const lvl = st === 'work' || st === 'help' ? (a.lvl || 0) : 0;
+    const P = a.fbp || [];
+    const els = itemsOf(sec, t);
+    const taskWhy = [];
+    if (lvl >= 2 && P.length) {
+      P.forEach((s, i) => {
+        const el = els[i];
+        const why = whyOf(t, i);
+        if (!el) { if (s === 'miss' && why && !taskWhy.includes(why)) taskWhy.push(why); return; }
+        el.classList.add(s === 'match' ? 'fb-ok' : 'fb-bad');
+        if (s !== 'match') {
+          const host = whyPlace(el, t);
+          const right = lvl >= 3 && key != null ? keyPart(t, key, i) : '';
+          if (host) {
+            if (right) host.insertAdjacentHTML('beforeend', '<div class="right">Правильно: <b>' + esc(right) + '</b></div>');
+            if (why) host.insertAdjacentHTML('beforeend', '<div class="why">' + esc(why) + '</div>');
+          } else {
+            if (right && t.type === 'sort') el.insertAdjacentHTML('afterend', '<span class="right">→ ' + esc(right) + '</span>');
+            if (why && !taskWhy.includes(why)) taskWhy.push(why);
+          }
+        }
+      });
+    }
+    // поля ввода: зелёные пункты закреплены, при готовом задании — всё
+    sec.querySelectorAll('[data-key]').forEach(el => {
+      el.readOnly = lock || !!el.closest('.fb-ok') || el.classList.contains('fb-ok');
     });
-    paintDots();
-    const real = tasks.filter(isTask);
-    const done = real.length && real.every(t => marks[t.id] && marks[t.id].s === 'ok');
-    const b = document.getElementById('done');
-    if (b) b.classList.toggle('hide', !done);
+    if (sec._redraw) sec._redraw();
+    btn.classList.toggle('hide', lock);
+
+    // текст под заданием
+    let html = '', cls = '';
+    const comment = m && (m.t || 0) >= (a.ct || 0) && m.c ? m.c : '';
+    if (st === 'ok') { cls = 'ok'; html = '<b>✓ Верно!</b> ' + (comment ? esc(comment) : 'Молодец.'); }
+    else if (st === 'pending') { cls = 'wait'; html = t.type === 'steps' && key != null ? '<b>Ответ сходится 👍</b> Учитель посмотрит, как записано решение.' : '<b>Готово!</b> Учитель проверит.'; }
+    else if (st === 'fix') { cls = 'fix'; html = '<b>Учитель просит доработать:</b> ' + esc(m.c || 'посмотри ещё раз') + '<br><span class="muted">Исправь и нажми «Проверить».</span>'; }
+    else if (st === 'help') {
+      cls = 'help';
+      html = '<b>Разобрали вместе.</b> Посмотри, как правильно, и запомни — в следующий раз получится!'
+        + (single(t) && key != null ? '<div class="right">Правильно: <b>' + esc(keyPart(t, key, 0)) + '</b></div>' : '');
+    } else if (lvl === 1) {
+      cls = 'try';
+      html = (a.fbn > 1 ? '<b>Верно ' + a.fbk + ' из ' + a.fbn + ' 👍</b> Найди и исправь ' + (a.fbn - a.fbk === 1 ? 'одну ошибку.' : (a.fbn - a.fbk) + ' ' + plural(a.fbn - a.fbk, 'ошибку', 'ошибки', 'ошибок') + '.')
+        : '<b>Пока не так.</b> Подумай ещё раз.')
+        + (t.why ? '<div class="why">Вспомни: ' + esc(t.why) + '</div>' : '<div class="muted">Перечитай правило ★ выше, если оно есть.</div>');
+    } else if (lvl === 2) {
+      cls = 'try';
+      html = (a.fbn > 1 ? '<b>Зелёное — верно, молодец!</b> Над жёлтым подумай ещё — рядом подсказка.' : '<b>Ещё не так.</b> Вот подсказка:')
+        + taskWhy.concat(single(t) && (t.why || (t.items && t.items[0] && t.items[0].why)) ? [t.why || t.items[0].why] : []).filter((x, i, arr) => x && arr.indexOf(x) === i)
+          .map(w => '<div class="why">' + esc(w) + '</div>').join('')
+        + '<div class="muted">Последняя попытка — потом разберём вместе.</div>';
+    }
+    if (st === 'help' && taskWhy.length) html += taskWhy.map(w => '<div class="why">' + esc(w) + '</div>').join('');
+    box.className = 'fb ' + cls + (html ? '' : ' hide');
+    if (box.innerHTML !== html) box.innerHTML = html;
+    if (fresh && html) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+    // как записать в тетрадь — после выполнения
+    const nb = document.getElementById('nb-' + t.id);
+    const nbHtml = t.copy && finished(st) ? NB.html(t.copy) : '';
+    if (!nbHtml) { nb.classList.add('hide'); nb.innerHTML = ''; delete nb.dataset.ready; }
+    else if (!nb.dataset.ready) {
+      nb.dataset.ready = '1';
+      nb.classList.remove('hide');
+      nb.innerHTML = '<button class="btn light small" data-nb>✍️ Как записать в тетрадь</button><div class="nb-body hide">' + nbHtml + '</div>';
+      nb.querySelector('[data-nb]').onclick = () => nb.querySelector('.nb-body').classList.toggle('hide');
+    }
+  }
+  const single = t => itemsOfCount(t) <= 1;
+  function itemsOfCount(t) {
+    if (t.type === 'letters') return ((t.text || '').match(/_/g) || []).length;
+    if (t.type === 'fill') return gapCount(t);
+    if (t.type === 'match') return (t.left || []).length;
+    if (t.type === 'sort') return (t.words || []).length;
+    return Array.isArray(t.items) ? t.items.length : 1;
+  }
+
+  function paintAll() {
+    if (!viewId) return;
+    tasks.forEach(t => paintTask(t, false));
+    paintDots(); paintFinish();
   }
 
   function paintDots() {
     const d = document.getElementById('dots');
     if (!d) return;
     d.innerHTML = tasks.filter(isTask).map((t, i) => {
-      const m = marks[t.id];
       const a = answers[t.id];
+      const st = status(t, a, marks[t.id]);
       const typed = a && ((a.text && a.text.replace(/_/g, '').trim()) || (a.parts && a.parts.some(p => p)));
-      const cls = m ? (m.s === 'ok' ? 'ok' : 'fix') : (typed ? 'typed' : '');
+      const cls = { ok: 'ok', help: 'help', pending: 'wait', fix: 'fix' }[st] || (typed ? 'typed' : '');
       return '<i class="' + cls + '" title="Задание ' + (i + 1) + '"></i>';
     }).join('');
+  }
+
+  function paintFinish() {
+    const f = document.getElementById('finish');
+    if (!f || !viewId) return;
+    const real = tasks.filter(isTask);
+    const left = real.filter(t => !finished(status(t, answers[t.id], marks[t.id]))).length;
+    const written = real.some(t => ['short', 'steps', 'letters'].includes(t.type));
+    let html;
+    if (done[viewId]) html = '<p class="done-note">Блок завершён ✓</p><button class="btn light" data-home>← К другим заданиям</button>';
+    else if (left) html = '<button class="btn" disabled>Осталось ' + left + ' ' + plural(left, 'задание', 'задания', 'заданий') + '</button>';
+    else html = '<p class="done-note">Всё готово! ' + (written ? 'Не забудь переписать в тетрадь ✍️' : 'Молодец 🎉') + '</p><button class="btn ok" data-finish>Завершить</button>';
+    if (f.innerHTML !== html) {
+      f.innerHTML = html;
+      const b = f.querySelector('[data-finish]');
+      if (b) b.onclick = () => R.child('done/' + viewId).set(TS).then(() => { toast('Блок завершён! 🎉'); goHome(); });
+      const h = f.querySelector('[data-home]');
+      if (h) h.onclick = goHome;
+    }
   }
 })();
 </script>

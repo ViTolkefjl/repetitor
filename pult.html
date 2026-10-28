@@ -6,7 +6,7 @@
 <title>Пульт учителя</title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="teacher">
 
 <!-- вход -->
 <section class="login hide" id="login">
@@ -20,9 +20,9 @@
 <div class="pult hide" id="pult">
   <header class="p-top">
     <div class="status" id="status"><i class="lamp"></i><div><span id="stText">—</span><small id="stSub"></small></div></div>
-    <div class="meter">Занятие <b id="mTotal">—</b></div>
+    <div class="meter">В блоке <b id="mTotal">—</b></div>
     <div class="meter">Активно <b id="mActive">—</b></div>
-    <div class="meter">Верно <b id="mDone">—</b></div>
+    <div class="meter">Готово <b id="mDone">—</b></div>
     <div class="spacer"></div>
     <button class="btn light small" id="linkBtn">Ссылка для брата</button>
     <button class="btn plain small" id="backupBtn">Резервная копия</button>
@@ -37,20 +37,21 @@
   </div>
 
   <div class="p-bar">
-    <select id="lessonSel" aria-label="Занятие"></select>
-    <button class="btn small" id="newBtn">Новое занятие</button>
+    <h2 class="p-h">Блоки</h2>
+    <button class="btn small" id="newBtn">Новый блок</button>
   </div>
+  <div class="lesson-list" id="lessonList"></div>
 
   <div class="panel hide" id="newPanel">
-    <h3>Новое занятие</h3>
+    <h3>Новый блок</h3>
     <div id="ready"></div>
-    <label for="importText">Вставь блок, который подготовил Claude</label>
-    <textarea id="importText" placeholder='{ "title": "Домашка на 29 октября", "tasks": [ … ] }'></textarea>
+    <label for="importText">Или вставь блок заданий, который подготовил Claude</label>
+    <textarea id="importText" placeholder='{ "title": "Математика на 29 октября", "tasks": [ … ] }'></textarea>
     <div class="p-bar" style="margin:12px 0 0">
-      <button class="btn" id="importBtn">Создать занятие</button>
+      <button class="btn" id="importBtn">Создать блок</button>
       <span class="muted">или</span>
-      <input id="emptyTitle" placeholder="Название пустого занятия" style="flex:1 1 200px;width:auto">
-      <button class="btn light" id="emptyBtn">Создать пустое</button>
+      <input id="emptyTitle" placeholder="Название пустого блока" style="flex:1 1 200px;width:auto">
+      <button class="btn light" id="emptyBtn">Создать пустой</button>
     </div>
     <div class="err" id="importErr"></div>
   </div>
@@ -66,32 +67,33 @@
 <script src="common.js"></script>
 <script>
 (function () {
-  const { db, now, TS, esc, check, dur, clock, randomKey, sortedTasks, lettersFromKey, isTask } = REP;
+  const { db, now, TS, esc, check, dur, clock, randomKey, sortedTasks, lettersFromKey, isTask, enc, status, finished } = REP;
   const GAP = /_{2,}/g;
   const realTasks = l => sortedTasks(l).filter(isTask);
   const $ = id => document.getElementById(id);
   const auth = firebase.auth();
 
   let room = null, R = null;
-  let lessons = {}, currentId = null, viewId = null;
-  let answers = {}, marks = {}, keys = {}, presence = {}, curAnswers = {};
-  let showKey = {};
-  let viewUnsubs = [], curUnsub = null;
+  let lessons = {}, open = {}, done = {}, current = null, viewId = null;
+  let answers = {}, marks = {}, keys = {}, presence = {}, curAnswers = {}, curMarks = {};
+  let viewUnsubs = [], curUnsubs = [], curFor = null;
   let connected = true, connTimer = null;
-  // подписка, которую можно снять точечно (ref.off() без колбэка снял бы и чужие подписки на тот же путь)
+  let showKeys = false;
+  try { showKeys = localStorage.getItem('rep_keys') === '1'; } catch (e) {}
+
+  // подписка, которую можно снять точечно
   function listen(ref, cb) {
     const h = ref.on('value', cb, fail);
     return () => ref.off('value', h);
   }
-
   function toast(msg) {
     const t = $('toast'); t.textContent = msg; t.classList.remove('hide');
-    clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('hide'), 2200);
+    clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('hide'), 2400);
   }
   function fail(e) {
     console.error(e);
     const m = String(e && (e.code || e.message) || e);
-    toast(/permission/i.test(m) ? 'Нет доступа к базе — проверь правила Firebase' : 'Ошибка: ' + m);
+    toast(/permission/i.test(m) ? 'Нет доступа к базе — обнови правила Firebase' : 'Ошибка: ' + m);
   }
 
   /* ---------- вход ---------- */
@@ -133,6 +135,7 @@
     }
     R = db.ref('rooms/' + room);
     $('login').classList.add('hide'); $('pult').classList.remove('hide');
+    await migrate();
 
     const link = location.href.replace(/[^/]*([?#].*)?$/, '') + 's.html#k=' + room;
     $('linkText').textContent = link;
@@ -141,16 +144,17 @@
         .then(() => toast('Ссылка скопирована')).catch(() => prompt('Скопируй ссылку:', link));
     };
 
-    R.child('lessons').on('value', s => { lessons = s.val() || {}; fillSelect(); if (viewId && !lessons[viewId]) setView(currentId); else renderLesson(); }, fail);
-    R.child('current').on('value', s => {
-      currentId = s.val();
-      if (!viewId || !lessons[viewId]) setView(currentId); else { fillSelect(); renderLesson(); }
-      if (curUnsub) curUnsub();
-      curUnsub = null; curAnswers = {};
-      if (currentId) curUnsub = listen(R.child('answers/' + currentId), a => { curAnswers = a.val() || {}; paintTop(); });
+    R.child('lessons').on('value', s => {
+      lessons = s.val() || {};
+      if (!viewId || !lessons[viewId]) setView(defaultView()); else { renderList(); renderLesson(); }
     }, fail);
-    R.child('presence').on('value', s => { presence = s.val() || {}; paintTop(); paintRows(); });
-    // после разрыва связи даём 3 с на переподключение, чтобы статус не мигал
+    R.child('open').on('value', s => { open = s.val() || {}; renderList(); renderHead(); });
+    R.child('done').on('value', s => { done = s.val() || {}; renderList(); renderHead(); });
+    R.child('presence').on('value', s => {
+      presence = s.val() || {};
+      followStudent();
+      paintTop(); paintRows(); renderList();
+    });
     db.ref('.info/connected').on('value', s => {
       clearTimeout(connTimer);
       if (s.val()) { connected = true; paintTop(); }
@@ -159,26 +163,69 @@
     setInterval(() => { paintTop(); paintRows(); }, 1000);
   }
 
-  /* ---------- выбор занятия ---------- */
-  const lessonList = () => Object.entries(lessons).sort((a, b) => (b[1].created || 0) - (a[1].created || 0));
-  function fillSelect() {
-    const sel = $('lessonSel');
-    const list = lessonList();
-    sel.innerHTML = list.length
-      ? list.map(([id, l]) => {
-          const d = l.created ? new Date(l.created) : null;
-          const date = d ? String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') : '';
-          return '<option value="' + id + '">' + esc(date + '  ' + (l.title || 'Занятие')) + (id === currentId ? '  — у брата' : '') + '</option>';
-        }).join('')
-      : '<option value="">Занятий пока нет</option>';
-    sel.value = viewId || '';
+  // переход со старого формата (одно «текущее» занятие) и ключи для самопроверки у старых занятий
+  async function migrate() {
+    const [cur, ls, ks, ch] = await Promise.all(['current', 'lessons', null, 'check'].map(p =>
+      (p ? R.child(p) : db.ref('keys/' + room)).once('value').then(s => s.val())));
+    const upd = {};
+    if (cur) { upd['rooms/' + room + '/open/' + cur] = true; upd['rooms/' + room + '/current'] = null; }
+    Object.keys(ks || {}).forEach(lid => {
+      if (!(ls || {})[lid]) return;
+      Object.keys(ks[lid] || {}).forEach(tid => {
+        if (!(ch && ch[lid] && ch[lid][tid])) upd['rooms/' + room + '/check/' + lid + '/' + tid] = enc(ks[lid][tid]);
+      });
+    });
+    if (Object.keys(upd).length) await db.ref().update(upd).catch(fail);
   }
-  $('lessonSel').onchange = e => setView(e.target.value || null);
+
+  /* ---------- где сейчас ученик ---------- */
+  const lessonList = () => Object.entries(lessons).sort((a, b) => (b[1].created || 0) - (a[1].created || 0));
+  const isOpen = id => !!open[id];
+  function defaultView() {
+    if (presence.lesson && lessons[presence.lesson]) return presence.lesson;
+    const o = lessonList().find(([id]) => isOpen(id) && !done[id]);
+    return o ? o[0] : (lessonList()[0] || [null])[0];
+  }
+  // статус и время считаем по блоку, в котором брат сейчас
+  function followStudent() {
+    const want = presence.lesson && lessons[presence.lesson] ? presence.lesson : null;
+    if (want === curFor) return;
+    curUnsubs.forEach(f => f()); curUnsubs = []; curAnswers = {}; curMarks = {}; curFor = want;
+    if (want) curUnsubs = [
+      listen(R.child('answers/' + want), a => { curAnswers = a.val() || {}; paintTop(); renderList(); }),
+      listen(R.child('marks/' + want), m => { curMarks = m.val() || {}; paintTop(); })
+    ];
+  }
+
+  /* ---------- список блоков ---------- */
+  function lessonState(id) {
+    if (done[id]) return { cls: 'done', txt: 'завершён ' + clock(done[id]) };
+    if (presence.online && presence.lesson === id) return { cls: 'now', txt: 'брат сейчас здесь' };
+    if (!isOpen(id)) return { cls: 'off', txt: 'скрыт' };
+    return { cls: 'on', txt: 'у брата' };
+  }
+  function renderList() {
+    const box = $('lessonList');
+    const list = lessonList();
+    if (!list.length) { box.innerHTML = '<p class="muted">Блоков пока нет — нажми «Новый блок».</p>'; return; }
+    const html = list.map(([id, l]) => {
+      const st = lessonState(id);
+      const d = l.created ? new Date(l.created) : null;
+      const date = d ? String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') : '';
+      return '<button class="lesson-chip ' + st.cls + (id === viewId ? ' sel' : '') + '" data-view="' + id + '">'
+        + '<span class="lc-title">' + esc(l.title || 'Блок') + '</span>'
+        + '<span class="lc-sub">' + date + ' — ' + st.txt + '</span></button>';
+    }).join('');
+    if (box.innerHTML !== html) {
+      box.innerHTML = html;
+      box.querySelectorAll('[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
+    }
+  }
 
   function setView(id) {
     viewUnsubs.forEach(f => f()); viewUnsubs = [];
-    viewId = id || null; answers = {}; marks = {}; keys = {}; showKey = {};
-    fillSelect(); renderLesson();
+    viewId = id || null; answers = {}; marks = {}; keys = {};
+    renderList(); renderLesson();
     if (!viewId) return;
     viewUnsubs = [
       listen(R.child('answers/' + viewId), s => { answers = s.val() || {}; paintRows(); }),
@@ -187,12 +234,13 @@
     ];
   }
 
-  /* ---------- новое занятие ---------- */
+  /* ---------- новый блок ---------- */
   $('newBtn').onclick = () => {
     const p = $('newPanel');
     p.classList.toggle('hide');
     if (!p.classList.contains('hide')) loadReady();
   };
+  $('linkBtn').onclick = () => $('linkPanel').classList.toggle('hide');
 
   // готовые уроки, которые Claude кладёт в папку lessons/ репозитория
   async function loadReady() {
@@ -204,8 +252,8 @@
       const list = (await r.json()).slice().reverse();
       if (!list.length) { box.innerHTML = ''; return; }
       box.innerHTML = '<label>Готовые уроки от Claude</label><div class="ready-list">' + list.map((x, i) =>
-        '<div class="ready-item"><span>' + esc(x.title) + (x.added ? ' <span class="muted">· ' + esc(x.added) + '</span>' : '') + '</span>'
-        + '<button class="btn small" data-ready="' + i + '">Создать занятие</button></div>').join('') + '</div>';
+        '<div class="ready-item"><span>' + esc(x.title) + (x.added ? ' <span class="muted">(' + esc(x.added) + ')</span>' : '') + '</span>'
+        + '<button class="btn small" data-ready="' + i + '">Создать блок</button></div>').join('') + '</div>';
       box.querySelectorAll('[data-ready]').forEach(b => b.onclick = async () => {
         $('importErr').textContent = '';
         b.disabled = true;
@@ -215,13 +263,12 @@
           if (!res.ok) throw new Error('файл урока не найден (' + res.status + ')');
           const d = await res.json();
           d.tasks.forEach((t, i) => makeTask(t, i + 1));
-          await createLesson(d.title || x.title, d.tasks);
+          await createLesson(d.title || x.title, d.tasks, d.subject);
         } catch (e) { $('importErr').textContent = 'Не получилось: ' + (e.message || e); }
         b.disabled = false;
       });
     } catch (e) { box.innerHTML = ''; }
   }
-  $('linkBtn').onclick = () => $('linkPanel').classList.toggle('hide');
 
   function parseImport(raw) {
     const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
@@ -250,17 +297,25 @@
     return a;
   }
   const count = (s, re) => (String(s).match(re) || []).length;
+  function cleanCopy(c) {
+    if (!c || !Array.isArray(c.lines) || !c.lines.length) return null;
+    return clean({
+      paper: c.paper === 'line' ? 'line' : 'cell',
+      lines: c.lines.map(l => typeof l === 'string' ? l : clean({ t: S(l.t), align: l.align === 'center' ? 'center' : '', indent: l.indent != null ? +l.indent : null })),
+      tips: Array.isArray(c.tips) && c.tips.length ? c.tips.map(S) : null
+    });
+  }
 
   function makeTask(src, n) {
     const type = TYPES.includes(src.type) ? src.type : 'short';
     const name = S(src.title) || ('№ ' + n);
     const bad = msg => { throw new Error('Задание «' + name + '»: ' + msg); };
-    const task = { n, type, subject: S(src.subject), title: S(src.title), text: S(src.text), hint: S(src.hint) };
+    const task = { n, type, subject: S(src.subject), title: S(src.title), text: S(src.text), hint: S(src.hint), why: S(src.why) };
     let key = src.answer != null ? S(src.answer) : '';
     const list = (v, what) => { if (!Array.isArray(v) || !v.length) bad('нет списка ' + what + '.'); return v; };
 
     if (type === 'short' && Array.isArray(src.items) && src.items.length) {
-      task.items = src.items.map(it => ({ q: S(it.q) }));
+      task.items = src.items.map(it => clean({ q: S(it.q), why: S(it.why) }));
       key = src.items.map(it => S(it.a));
     }
     if (type === 'letters') {
@@ -274,7 +329,7 @@
         const opts = (it.options || []).map(S).filter(Boolean);
         if (opts.length < 2) bad('в вопросе ' + (i + 1) + ' меньше двух вариантов.');
         if (S(it.a) && !opts.includes(S(it.a))) bad('ответ «' + S(it.a) + '» не из вариантов.');
-        return clean({ q: S(it.q), tr: S(it.tr), pic: S(it.pic), options: opts });
+        return clean({ q: S(it.q), tr: S(it.tr), pic: S(it.pic), options: opts, why: S(it.why) });
       });
       key = items.map(it => S(it.a));
     }
@@ -287,7 +342,7 @@
         const a = Array.isArray(it.a) ? it.a.map(S) : [S(it.a)];
         if (a.length !== gaps) bad('в предложении ' + (i + 1) + ' пропусков ' + gaps + ', а ответов ' + a.length + '.');
         key.push(...a);
-        return clean({ q: S(it.q), tr: S(it.tr), pic: S(it.pic) });
+        return clean({ q: S(it.q), tr: S(it.tr), pic: S(it.pic), why: S(it.why) });
       });
       const bank = (Array.isArray(src.bank) && src.bank.length ? src.bank : key).map(S).filter(Boolean);
       const left = bank.slice();
@@ -315,7 +370,7 @@
         const m = S(it.a).match(/^(.*?)\s*([.!?]*)$/);
         const words = m[1].split(/\s+/).filter(Boolean);
         if (words.length < 2) bad('в предложении ' + (i + 1) + ' меньше двух слов.');
-        return clean({ words: shuffled(words), end: m[2], tr: S(it.tr), pic: S(it.pic) });
+        return clean({ words: shuffled(words), end: m[2], tr: S(it.tr), pic: S(it.pic), why: S(it.why) });
       });
       key = items.map(it => S(it.a));
     }
@@ -325,27 +380,30 @@
       task.note = S(src.note);
       key = '';
     }
+    task.copy = cleanCopy(src.copy);
     clean(task);
     return { task, key };
   }
+  const hasKey = k => k !== '' && k != null && !(Array.isArray(k) && k.every(x => x === ''));
 
-  async function createLesson(title, srcTasks) {
+  async function createLesson(title, srcTasks, subject) {
     const id = R.child('lessons').push().key;
-    const tasks = {}, k = {};
+    const tasks = {}, k = {}, ch = {};
     srcTasks.forEach((s, i) => {
       const { task, key } = makeTask(s, i + 1);
       const tid = 't' + (i + 1);
       tasks[tid] = task;
-      if (key !== '' && !(Array.isArray(key) && key.every(x => x === ''))) k[tid] = key;
+      if (hasKey(key)) { k[tid] = key; ch[tid] = enc(key); }
     });
     await db.ref().update({
-      ['rooms/' + room + '/lessons/' + id]: { title: title || 'Домашка', created: TS, tasks },
+      ['rooms/' + room + '/lessons/' + id]: clean({ title: title || 'Домашка', subject: S(subject), created: TS, tasks }),
       ['keys/' + room + '/' + id]: Object.keys(k).length ? k : null,
-      ['rooms/' + room + '/current']: id
+      ['rooms/' + room + '/check/' + id]: Object.keys(ch).length ? ch : null,
+      ['rooms/' + room + '/open/' + id]: true
     });
     setView(id);
     $('newPanel').classList.add('hide');
-    toast('Занятие создано и уже открыто у брата');
+    toast('Блок создан — у брата он уже появился');
   }
 
   $('importBtn').onclick = () => {
@@ -353,7 +411,7 @@
     try {
       const d = parseImport($('importText').value);
       d.tasks.forEach((t, i) => makeTask(t, i + 1)); // проверка до записи
-      createLesson(d.title, d.tasks).then(() => { $('importText').value = ''; }).catch(fail);
+      createLesson(d.title, d.tasks, d.subject).then(() => { $('importText').value = ''; }).catch(fail);
     } catch (e) { $('importErr').textContent = e.message; }
   };
   $('emptyBtn').onclick = () => {
@@ -361,21 +419,57 @@
     createLesson($('emptyTitle').value.trim() || 'Домашка', []).then(() => { $('emptyTitle').value = ''; }).catch(fail);
   };
 
-  /* ---------- экран занятия ---------- */
+  /* ---------- экран блока ---------- */
+  const TYPE_NAME = { choice: 'выбор', fill: 'слово в пропуск', match: 'пары', sort: 'по группам', order: 'собери предложение', steps: 'ход решения', letters: 'вставь букву' };
+
+  function renderHead() {
+    const h = $('lessonHead');
+    const l = viewId && lessons[viewId];
+    if (!h || !l) return;
+    const st = lessonState(viewId);
+    const html = '<h2>' + esc(l.title || 'Блок') + '</h2>'
+      + '<span class="tag ' + st.cls + '">' + st.txt + '</span>'
+      + (isOpen(viewId) ? '<button class="btn plain small" data-open="0">Скрыть у брата</button>' : '<button class="btn light small" data-open="1">Показать брату</button>')
+      + (done[viewId] ? '<button class="btn plain small" data-reopen>Вернуть в работу</button>' : '')
+      + '<button class="btn light small" id="keysBtn">' + (showKeys ? 'Скрыть ключи' : 'Показать ключи') + '</button>'
+      + '<button class="btn plain small" id="delLesson">Удалить</button>';
+    if (h.innerHTML === html) return;
+    h.innerHTML = html;
+    const ob = h.querySelector('[data-open]');
+    ob.onclick = () => R.child('open/' + viewId).set(ob.dataset.open === '1' ? true : null).catch(fail);
+    const rb = h.querySelector('[data-reopen]');
+    if (rb) rb.onclick = () => R.child('done/' + viewId).remove().catch(fail);
+    $('keysBtn').onclick = () => {
+      showKeys = !showKeys;
+      try { localStorage.setItem('rep_keys', showKeys ? '1' : '0'); } catch (e) {}
+      document.body.classList.toggle('keys-on', showKeys);
+      renderHead();
+    };
+    $('delLesson').onclick = () => {
+      if (!confirm('Удалить блок «' + (l.title || '') + '» вместе с ответами?')) return;
+      const id = viewId;
+      db.ref().update({
+        ['rooms/' + room + '/lessons/' + id]: null, ['rooms/' + room + '/answers/' + id]: null,
+        ['rooms/' + room + '/marks/' + id]: null, ['rooms/' + room + '/check/' + id]: null,
+        ['rooms/' + room + '/open/' + id]: null, ['rooms/' + room + '/done/' + id]: null,
+        ['keys/' + room + '/' + id]: null
+      }).then(() => setView(null)).catch(fail);
+    };
+  }
+
   function renderLesson() {
     const v = $('lessonView');
     const l = viewId && lessons[viewId];
+    document.body.classList.toggle('keys-on', showKeys);
     if (!l) {
-      v.innerHTML = '<div class="panel"><h3>Создай первое занятие</h3><p class="muted" style="margin:0">Пришли Claude фото дневника и страниц учебника — он подготовит блок заданий. Вставь его через «Новое занятие».</p></div>';
+      v.innerHTML = '<div class="panel"><h3>Создай первый блок</h3><p class="muted" style="margin:0">Пришли Claude фото дневника и страниц учебника — он подготовит задания. Потом «Новый блок».</p></div>';
       return;
     }
     const tasks = sortedTasks(l);
-    let html = '<div class="p-bar"><h2>' + esc(l.title || 'Занятие') + '</h2>'
-      + (viewId === currentId ? '<span class="tag">открыто у брата</span>' : '<button class="btn light small" id="makeCur">Открыть у брата</button>')
-      + '<button class="btn plain small" id="delLesson">Удалить</button></div>';
+    let html = '<div class="p-bar lesson-head" id="lessonHead"></div>';
     if (!tasks.length) html += '<p class="muted">Заданий пока нет — добавь их ниже.</p>';
     let num = 0;
-    tasks.forEach((t, i) => {
+    tasks.forEach(t => {
       if (t.type === 'theory') {
         html += '<section class="sheet row theory" id="row-' + t.id + '"><div class="margin"><span class="star">★</span></div>'
           + '<h3 class="task-title">' + esc(t.title || 'Правило') + '</h3><p class="task-text">Правило с картинками — ответа не требует.</p>'
@@ -383,37 +477,35 @@
         return;
       }
       num++;
-      html += '<section class="sheet row" id="row-' + t.id + '"><div class="margin">' + num + '</div><div class="row-grid">'
-        + '<div>' + (t.subject ? '<span class="subject">' + esc(t.subject) + '</span>' : '')
+      html += '<section class="sheet row" id="row-' + t.id + '"><div class="margin">' + num + '</div>'
+        + '<div class="row-head"><div>' + (t.subject ? '<span class="subject">' + esc(t.subject) + '</span>' : '')
         + '<h3 class="task-title">' + esc(t.title || 'Задание ' + num) + '</h3>'
-        + '<p class="task-text">' + esc(t.type === 'letters' ? [t.note, t.text].filter(Boolean).join('\n') : (t.text || '')) + '</p>'
-        + (TYPE_NAME[t.type] ? '<span class="tag">' + TYPE_NAME[t.type] + '</span> ' : '')
-        + '<button class="btn plain small" data-del="' + t.id + '">Убрать задание</button></div>'
-        + '<div><div class="live" id="live-' + t.id + '"></div><div class="chips" id="chips-' + t.id + '"></div>'
-        + '<div class="mark hide" id="mark-' + t.id + '"></div>'
-        + '<div class="actions"><input id="cmt-' + t.id + '" placeholder="Комментарий">'
+        + (t.text ? '<p class="task-text">' + esc(t.type === 'letters' ? (t.note || '') : t.text) + '</p>' : '') + '</div>'
+        + '<div class="row-tools">' + (TYPE_NAME[t.type] ? '<span class="tag">' + TYPE_NAME[t.type] + '</span>' : '')
+        + '<button class="btn plain small" data-del="' + t.id + '">Убрать</button></div></div>'
+        + '<div class="auto" id="auto-' + t.id + '"></div>'
+        + '<div class="cmp-wrap" id="cmp-' + t.id + '"></div>'
+        + '<div class="chips" id="chips-' + t.id + '"></div>'
+        + '<div class="actions"><input id="cmt-' + t.id + '" placeholder="Комментарий брату">'
         + '<button class="btn ok small" data-mark="ok" data-t="' + t.id + '">✓ Верно</button>'
-        + '<button class="btn fix small" data-mark="fix" data-t="' + t.id + '">✗ Исправь</button>'
-        + '<button class="btn plain small hide" data-unmark="' + t.id + '">Снять</button></div>'
-        + '</div></div></section>';
+        + '<button class="btn fix small" data-mark="fix" data-t="' + t.id + '">↩ Доработать</button>'
+        + '<button class="btn plain small hide" data-unmark="' + t.id + '">Снять отметку</button></div>'
+        + '</section>';
     });
     html += addForm();
     v.innerHTML = html;
+    renderHead();
 
-    const mc = $('makeCur');
-    if (mc) mc.onclick = () => R.child('current').set(viewId).then(() => toast('Брат видит это занятие')).catch(fail);
-    $('delLesson').onclick = () => {
-      if (!confirm('Удалить занятие «' + (l.title || '') + '» вместе с ответами?')) return;
-      const id = viewId;
-      db.ref().update({
-        ['rooms/' + room + '/lessons/' + id]: null, ['rooms/' + room + '/answers/' + id]: null,
-        ['rooms/' + room + '/marks/' + id]: null, ['keys/' + room + '/' + id]: null,
-        ...(id === currentId ? { ['rooms/' + room + '/current']: null } : {})
-      }).then(() => setView(currentId !== id ? currentId : null)).catch(fail);
-    };
     v.querySelectorAll('[data-mark]').forEach(b => b.onclick = () => {
       const id = b.dataset.t, c = $('cmt-' + id);
-      R.child('marks/' + viewId + '/' + id).set({ s: b.dataset.mark, c: c.value.trim(), t: TS }).catch(fail);
+      const text = c.value.trim();
+      if (b.dataset.mark === 'fix' && !text) {
+        c.focus(); c.classList.add('need');
+        toast('Напиши брату, что именно доработать');
+        return;
+      }
+      c.classList.remove('need');
+      R.child('marks/' + viewId + '/' + id).set({ s: b.dataset.mark, c: text, t: TS }).catch(fail);
       c.value = '';
     });
     v.querySelectorAll('[data-unmark]').forEach(b => b.onclick = () => R.child('marks/' + viewId + '/' + b.dataset.unmark).remove().catch(fail));
@@ -424,72 +516,78 @@
         ['rooms/' + room + '/lessons/' + viewId + '/tasks/' + id]: null,
         ['rooms/' + room + '/answers/' + viewId + '/' + id]: null,
         ['rooms/' + room + '/marks/' + viewId + '/' + id]: null,
+        ['rooms/' + room + '/check/' + viewId + '/' + id]: null,
         ['keys/' + room + '/' + viewId + '/' + id]: null
       }).catch(fail);
     });
-    v.querySelectorAll('.chips').forEach(c => c.addEventListener('click', e => {
-      const k = e.target.closest('[data-key]');
-      if (k) { showKey[k.dataset.key] = !showKey[k.dataset.key]; paintRows(); }
-    }));
     bindAddForm();
     paintRows();
   }
 
-  const TYPE_NAME = { choice: 'выбор', fill: 'слово в пропуск', match: 'пары', sort: 'по группам', order: 'собери предложение' };
-
-  /* ---------- живые ответы ---------- */
-  function liveHtml(t, a, res) {
-    if (!a || !(a.text || (a.parts && a.parts.length))) return '<span class="ph">пусто</span>';
-    const cls = s => s === 'miss' ? 'bad' : s === 'match' ? 'good' : '';
-    if (t.type === 'letters') {
-      let n = 0;
-      return esc(t.text || '').replace(/_/g, () => {
-        const i = n++, L = (a.parts || [])[i];
-        if (!L) return '<span class="ph">_</span>';
-        return '<span class="' + cls(res.parts && res.parts[i]) + '">' + esc(L) + '</span>';
-      });
-    }
-    const P = a.parts || [], RP = res.parts || [];
-    const put = (i, ph) => P[i] ? '<span class="' + cls(RP[i]) + '">' + esc(P[i]) + '</span>' : '<span class="ph">' + (ph || '___') + '</span>';
-    if (t.type === 'choice') {
-      return '<div class="live-items">' + (t.items || []).map((it, i) => {
-        const q = esc(it.q || '');
-        return '<div>' + (/_{2,}/.test(it.q || '') ? q.replace(GAP, () => put(i)) : '<span class="q">' + q + '</span>' + put(i, '…')) + '</div>';
-      }).join('') + '</div>';
-    }
+  /* ---------- сравнение «ответ брата ↔ ключ» построчно ---------- */
+  const firstAlt = k => String(k == null ? '' : k).split('|')[0];
+  function rowsOf(t, a, k, res) {
+    const P = (a && a.parts) || [], RP = res.parts || [];
+    const K = Array.isArray(k) ? k : null;
+    const ans = (v, s) => v ? { v, s } : { v: '', s: 'empty' };
+    if (t.type === 'choice') return (t.items || []).map((it, i) => ({ q: it.q, ...ans(P[i], RP[i]), k: K && K[i] }));
     if (t.type === 'fill') {
-      let g = 0;
-      return '<div class="live-items">' + (t.items || []).map(it => '<div>' + esc(it.q || '').replace(GAP, () => put(g++)) + '</div>').join('') + '</div>';
+      const out = []; let g = 0;
+      (t.items || []).forEach(it => {
+        const c = count(it.q, GAP);
+        for (let j = 0; j < c; j++, g++) out.push({ q: c > 1 ? it.q + ' (' + (j + 1) + ')' : it.q, ...ans(P[g], RP[g]), k: K && K[g] });
+      });
+      return out;
     }
-    if (t.type === 'match') {
-      return '<div class="live-items">' + (t.left || []).map((l, i) => '<div><span class="q">' + esc(l) + ' →</span>' + put(i, '…') + '</div>').join('') + '</div>';
+    if (t.type === 'match') return (t.left || []).map((l, i) => ({ q: l, ...ans(P[i], RP[i]), k: K && K[i] }));
+    if (t.type === 'sort') return (t.words || []).map((w, i) => ({ q: w, ...ans(P[i], RP[i]), k: K && K[i] }));
+    if (t.type === 'order') return (t.items || []).map((it, i) => ({ q: it.tr || ('Предложение ' + (i + 1)), ...ans(P[i] ? P[i] + (it.end || '') : '', RP[i]), k: K && K[i] }));
+    if (t.type === 'short' && Array.isArray(t.items)) return t.items.map((it, i) => ({ q: it.q, ...ans(P[i], RP[i]), k: K && K[i] }));
+    if (t.type === 'letters') {
+      const L = typeof k === 'string' ? lettersFromKey(t.text || '', k) : null;
+      let n = 0;
+      const out = [];
+      String(t.text || '').split(/,\s*|\n/).forEach(word => {
+        const c = count(word, /_/g);
+        if (!c) return;
+        let m = 0;
+        const got = word.replace(/_/g, () => P[n + (m++)] || '_');
+        const st = Array.from({ length: c }, (_, j) => RP[n + j]);
+        const s = st.every(x => x === 'match') ? 'match' : st.some(x => x === 'miss') ? 'miss' : 'empty';
+        let m2 = 0;
+        const key = L ? word.replace(/_/g, () => L[n + (m2++)]) : null;
+        const any = st.length && Array.from({ length: c }, (_, j) => P[n + j]).some(Boolean);
+        out.push({ q: word, v: any ? got : '', s: got.includes('_') ? (s === 'miss' ? 'miss' : 'empty') : s, k: key });
+        n += c;
+      });
+      if (!out.length) out.push({ q: '', v: a && a.text, s: res.state, k });
+      return out;
     }
-    if (t.type === 'sort') {
-      const rows = (t.groups || []).map(g => '<div><span class="q">' + esc(g) + ':</span>'
-        + ((t.words || []).map((w, i) => P[i] === g ? '<span class="' + cls(RP[i]) + '">' + esc(w) + '</span>' : '').filter(Boolean).join(', ') || '<span class="ph">…</span>') + '</div>');
-      const rest = (t.words || []).filter((w, i) => !P[i]);
-      if (rest.length) rows.push('<div><span class="q">не разложены:</span><span class="ph">' + esc(rest.join(', ')) + '</span></div>');
-      return '<div class="live-items">' + rows.join('') + '</div>';
-    }
-    if (t.type === 'order') {
-      return '<div class="live-items">' + (t.items || []).map((it, i) => '<div>' + put(i, '…') + (P[i] ? esc(it.end || '') : '') + '</div>').join('') + '</div>';
-    }
-    if (t.type === 'short' && Array.isArray(t.items)) {
-      return '<div class="live-items">' + t.items.map((it, i) => {
-        const v = (a.parts || [])[i];
-        return '<div><span class="q">' + esc(it.q) + '</span>'
-          + (v ? '<span class="' + cls(res.parts && res.parts[i]) + '">' + esc(v) + '</span>' : '<span class="ph">…</span>') + '</div>';
-      }).join('') + '</div>';
-    }
-    return esc(a.text);
+    return [{ q: t.type === 'steps' ? 'Решение' : 'Ответ', v: a && a.text ? a.text : '', s: a && a.text ? res.state : 'empty', k: k, steps: t.type === 'steps' }];
   }
 
-  function keyText(t, k) {
-    if (t.type === 'match') return (t.left || []).map((l, i) => l + ' → ' + (k[i] || '?')).join('; ');
-    if (t.type === 'sort') return (t.groups || []).map(g => g + ': ' + (t.words || []).filter((w, i) => k[i] === g).join(', ')).join('; ');
-    if (['choice', 'fill', 'order'].includes(t.type)) return [].concat(k).join('; ');
-    if (Array.isArray(k)) return (t.items || []).map((it, i) => it.q + ' ' + (k[i] || '?')).join('; ');
-    return String(k);
+  function cmpHtml(t, a, k, res) {
+    const rows = rowsOf(t, a, k, res);
+    const mark = s => s === 'match' ? '<i class="cm ok" title="совпадает с ключом">✓</i>' : s === 'miss' ? '<i class="cm bad" title="не совпадает">✗</i>' : '';
+    return '<table class="cmp"><thead><tr><th>Задание</th><th>Ответ брата</th><th class="kcol">Ключ</th></tr></thead><tbody>'
+      + rows.map(r => '<tr class="' + (r.s || '') + '"><td class="q">' + esc(r.q || '') + '</td>'
+        + '<td class="a">' + (r.v ? mark(r.s) + (r.steps ? '<pre>' + esc(r.v) + '</pre>' : esc(r.v)) : '<span class="ph">—</span>') + '</td>'
+        + '<td class="kcol">' + (r.k != null && r.k !== '' ? esc(firstAlt(r.k)) : '<span class="ph">нет ключа</span>') + '</td></tr>').join('')
+      + '</tbody></table>';
+  }
+
+  function autoText(t, a, m) {
+    const st = status(t, a, m);
+    const tries = a && a.tries ? a.tries : 0;
+    const map = {
+      ok: m && (m.t || 0) >= ((a && a.ct) || 0) ? ['ok', '✓ Ты отметил «Верно»'] : ['ok', '✓ Сам проверил — всё верно' + (tries ? ' (ошибок до этого: ' + tries + ')' : ' с первого раза')],
+      help: ['help', 'Разобрали с подсказкой: 3 попытки, правильный ответ показан'],
+      pending: ['wait', t.type === 'steps' ? 'Итоговый ответ сходится — посмотри запись решения и поставь «Верно»' : 'Ждёт твоей проверки (ключа нет)'],
+      fix: ['fix', '↩ Ты вернул на доработку'],
+      work: a && a.lvl ? ['try', 'Проверял: попытка ' + tries + ' из 3, ' + (a.fbk || 0) + ' из ' + (a.fbn || 1) + ' верно'] : ['', a && (a.text || (a.parts && a.parts.some(Boolean))) ? 'Делает, ещё не проверял' : 'Не начинал']
+    };
+    const [cls, txt] = map[st] || ['', ''];
+    return '<span class="auto-pill ' + cls + '">' + esc(txt) + '</span>';
   }
 
   function paintRows() {
@@ -501,28 +599,24 @@
       if (!row) return;
       const a = answers[t.id], k = keys[t.id], m = marks[t.id];
       const res = check(t, k, a);
-      $('live-' + t.id).innerHTML = liveHtml(t, a, res);
+      const cmp = cmpHtml(t, a, k, res);
+      const box = $('cmp-' + t.id);
+      if (box.dataset.h !== cmp) { box.dataset.h = cmp; box.innerHTML = cmp; }
+      const au = autoText(t, a, m);
+      if ($('auto-' + t.id).innerHTML !== au) $('auto-' + t.id).innerHTML = au;
 
       const chips = [];
-      if (res.state === 'match') chips.push('<span class="chip match">совпало с ключом</span>');
-      if (res.state === 'miss') chips.push('<span class="chip miss">не совпало с ключом</span>');
-      if (k != null) chips.push('<span class="chip key" data-key="' + t.id + '">' + (showKey[t.id] ? 'ключ: ' + esc(keyText(t, k)) : 'показать ключ') + '</span>');
-      else chips.push('<span class="chip">ключа нет</span>');
       if (a && a.active >= 1000) chips.push('<span class="chip">активно ' + dur(a.active) + '</span>');
       if (a && a.start) chips.push('<span class="chip">начал в ' + clock(a.start) + '</span>');
       if (a && a.hint) chips.push('<span class="chip warn">открыл подсказку</span>');
-      if (m && a && a.t > m.t) chips.push('<span class="chip warn">изменил после отметки</span>');
-      $('chips-' + t.id).innerHTML = chips.join('');
+      if (m && m.c) chips.push('<span class="chip">твой комментарий: ' + esc(m.c) + '</span>');
+      if (m && a && a.t > m.t) chips.push('<span class="chip warn">менял ответ после твоей отметки</span>');
+      const ch = chips.join('');
+      if ($('chips-' + t.id).innerHTML !== ch) $('chips-' + t.id).innerHTML = ch;
 
-      const mk = $('mark-' + t.id);
-      if (m) {
-        mk.className = 'mark ' + (m.s === 'ok' ? 'ok' : 'fix');
-        mk.textContent = (m.s === 'ok' ? '✓ Верно' : '✗ Исправь') + (m.c ? ': ' + m.c : '');
-      } else { mk.className = 'mark hide'; mk.textContent = ''; }
       const un = row.querySelector('[data-unmark]');
       un && un.classList.toggle('hide', !m);
-
-      const typing = viewId === currentId && presence.online && presence.task === t.id && a && n - (a.t || 0) < 5000;
+      const typing = presence.online && presence.lesson === viewId && presence.task === t.id && a && n - (a.t || 0) < 5000;
       row.classList.toggle('typing-now', !!typing);
     });
   }
@@ -536,18 +630,19 @@
       if (a.start && (!first || a.start < first)) first = a.start;
       active += a.active || 0;
     });
+    const where = p.lesson && lessons[p.lesson] ? (lessons[p.lesson].title || 'блок') : '';
     let cls, txt, sub = '';
     if (!connected) { cls = 'bad'; txt = 'Нет связи'; sub = 'проверь интернет и VPN на этом устройстве'; }
-    else if (!currentId) { cls = ''; txt = 'Нет открытого занятия'; }
     else if (!p.online) { cls = 'bad'; txt = 'Не на странице'; sub = p.t ? 'вышел в ' + clock(p.t) : 'ещё не заходил'; }
     else if (p.visible === false || p.focus === false) { cls = 'bad'; txt = 'Ушёл в другое окно'; sub = p.t ? 'уже ' + dur(n - p.t) : ''; }
-    else if (!lastT) { cls = 'warn'; txt = 'Открыл страницу'; sub = 'пока ничего не написал'; }
+    else if (!where) { cls = 'warn'; txt = 'Выбирает блок'; sub = 'на главном экране'; }
+    else if (!lastT) { cls = 'warn'; txt = 'Открыл блок'; sub = where + ' — пока ничего не сделал'; }
     else {
       const idle = n - lastT;
-      const num = taskNum(p.task);
-      if (idle < 5000) { cls = 'ok'; txt = 'Печатает'; sub = num ? 'задание ' + num : ''; }
-      else if (idle < 120000) { cls = 'warn'; txt = 'Думает'; sub = dur(idle) + ' без ввода'; }
-      else { cls = idle < 300000 ? 'warn' : 'bad'; txt = 'Бездействует'; sub = dur(idle) + ' без ввода'; }
+      const num = taskNum(p.lesson, p.task);
+      if (idle < 5000) { cls = 'ok'; txt = 'Работает'; sub = where + (num ? ', задание ' + num : ''); }
+      else if (idle < 120000) { cls = 'warn'; txt = 'Думает'; sub = where + ', ' + dur(idle) + ' без действий'; }
+      else { cls = idle < 300000 ? 'warn' : 'bad'; txt = 'Бездействует'; sub = where + ', ' + dur(idle) + ' без действий'; }
     }
     st.className = 'status ' + cls;
     $('stText').textContent = txt; $('stSub').textContent = sub;
@@ -555,15 +650,14 @@
     const end = p.online ? n : lastT;
     $('mTotal').textContent = first ? dur(end - first) : '—';
     $('mActive').textContent = active ? dur(active) : '—';
-    const l = currentId && lessons[currentId];
+    const l = curFor && lessons[curFor];
     if (l) {
       const ts = realTasks(l);
-      const ok = viewId === currentId ? ts.filter(t => marks[t.id] && marks[t.id].s === 'ok').length : null;
-      $('mDone').textContent = ok == null ? '—' : ok + ' из ' + ts.length;
+      $('mDone').textContent = ts.filter(t => finished(status(t, curAnswers[t.id], curMarks[t.id]))).length + ' из ' + ts.length;
     } else $('mDone').textContent = '—';
   }
-  function taskNum(id) {
-    const l = currentId && lessons[currentId];
+  function taskNum(lid, id) {
+    const l = lessons[lid];
     if (!l || !id) return 0;
     return realTasks(l).findIndex(t => t.id === id) + 1;
   }
@@ -576,11 +670,12 @@
       + '<option value="steps">Ход решения</option><option value="letters">Вставь букву</option></select></div>'
       + '<div><label for="fSubject">Предмет</label><input id="fSubject" placeholder="Математика"></div>'
       + '<div><label for="fTitle">Название</label><input id="fTitle" placeholder="№ 245, стр. 61"></div>'
-      + '<div><label for="fHint">Подсказка</label><input id="fHint" placeholder="необязательно"></div></div>'
-      + '<label for="fText" id="fTextL">Текст задания</label><textarea id="fText" style="min-height:80px;font-family:inherit;font-size:16px"></textarea>'
+      + '<div><label for="fHint">Подсказка до проверки</label><input id="fHint" placeholder="необязательно"></div></div>'
+      + '<label for="fText">Текст задания</label><textarea id="fText" style="min-height:80px;font-family:inherit;font-size:16px"></textarea>'
       + '<div id="fTplBox" class="hide"><label for="fTpl">Слова с пропусками — каждый пропуск «_»</label><input id="fTpl" placeholder="к_рова, м_локо"></div>'
       + '<div id="fItemsBox" class="hide"><label for="fItems">Пункты — каждый с новой строки: вопрос | ответ</label><textarea id="fItems" placeholder="36 : 4 = | 9\n7 · 8 = | 56" style="font-family:inherit;font-size:16px"></textarea></div>'
       + '<div id="fAnsBox"><label for="fAns" id="fAnsL">Правильный ответ (ученик не видит)</label><input id="fAns"></div>'
+      + '<label for="fWhy">Объяснение при ошибке — правило, без ответа</label><input id="fWhy" placeholder="например: после глагола — me, him, them">'
       + '<button class="btn" id="fAdd" style="margin-top:12px">Добавить</button><div class="err" id="fErr"></div></div>';
   }
   function bindAddForm() {
@@ -598,7 +693,7 @@
       $('fErr').textContent = '';
       const v = type.value;
       const src = { type: v === 'items' ? 'short' : v, subject: $('fSubject').value.trim(), title: $('fTitle').value.trim(),
-        text: $('fText').value.trim(), hint: $('fHint').value.trim(), answer: $('fAns').value.trim() };
+        text: $('fText').value.trim(), hint: $('fHint').value.trim(), answer: $('fAns').value.trim(), why: $('fWhy').value.trim() };
       if (v === 'items') {
         src.items = $('fItems').value.split('\n').map(s => s.trim()).filter(Boolean).map(s => {
           const i = s.lastIndexOf('|');
@@ -616,9 +711,11 @@
       } catch (e) { $('fErr').textContent = e.message; return; }
       const tid = 't' + Date.now().toString(36);
       const upd = { ['rooms/' + room + '/lessons/' + viewId + '/tasks/' + tid]: made.task };
-      const k = made.key;
-      if (k !== '' && !(Array.isArray(k) && k.every(x => x === ''))) upd['keys/' + room + '/' + viewId + '/' + tid] = k;
-      db.ref().update(upd).then(() => toast('Задание добавлено')).catch(fail);
+      if (hasKey(made.key)) {
+        upd['keys/' + room + '/' + viewId + '/' + tid] = made.key;
+        upd['rooms/' + room + '/check/' + viewId + '/' + tid] = enc(made.key);
+      }
+      db.ref().update(upd).then(() => toast('Задание добавлено — у брата оно уже есть')).catch(fail);
     };
   }
 

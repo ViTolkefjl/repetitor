@@ -125,5 +125,22 @@
   // правило (theory) — без ответа и отметок
   const isTask = t => t.type !== 'theory';
 
-  window.REP = { db, now, TS, esc, norm, check, dur, clock, randomKey, sortedTasks, lettersFromKey, isTask, MULTI };
+  // Ключ для самопроверки у ученика хранится «спрятанным» (base64 задом наперёд).
+  // Это защита от случайного подглядывания ребёнком, а не шифрование.
+  const enc = v => btoa(unescape(encodeURIComponent(JSON.stringify(v)))).split('').reverse().join('');
+  const dec = s => { try { return JSON.parse(decodeURIComponent(escape(atob(String(s).split('').reverse().join(''))))); } catch (e) { return null; } };
+
+  /* Итоговое состояние задания.
+     Отметка учителя главнее, если поставлена позже последней самопроверки.
+     ok — верно; help — разобрали с подсказкой; pending — ждёт учителя; fix — учитель вернул; work — в работе */
+  function status(t, a, m) {
+    if (!isTask(t)) return 'rule';
+    const ct = (a && a.ct) || 0;
+    if (m && (m.t || 0) >= ct) return m.s === 'ok' ? 'ok' : 'fix';
+    if (a && a.res) return a.res;
+    return 'work';
+  }
+  const finished = s => s === 'ok' || s === 'help' || s === 'pending' || s === 'rule';
+
+  window.REP = { db, now, TS, esc, norm, check, dur, clock, randomKey, sortedTasks, lettersFromKey, isTask, MULTI, enc, dec, status, finished };
 })();
