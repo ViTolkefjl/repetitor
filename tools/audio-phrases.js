@@ -32,19 +32,21 @@ const spoken = s => /^I[.!?]?$/.test(s) ? 'eye' : s;     // одиночная I
 const lines = list.map(p => 'gen ' + audioId(p) + ' ' + q(spoken(p)) + '   # ' + p.replace(/\n/g, ' '));
 
 const sh = `#!/bin/bash
-# Озвучка английских слов для сайта «Репетитор» живым голосом macOS (Ava/Zoe Premium).
+# Озвучка английских слов для сайта «Репетитор» живым голосом macOS (Jamie / Ava / Zoe — «высшее качество»).
 # Создаёт на Рабочем столе архив repetitor-audio.zip — его нужно прислать Claude.
 # Фраз: ${list.length}. Сгенерировано tools/audio-phrases.js — не правь вручную.
 set -e
 V=""
-for name in "Ava (Premium)" "Zoe (Premium)" "Ava (Enhanced)" "Zoe (Enhanced)" "Samantha (Enhanced)"; do
+for name in "Jamie (Premium)" "Ava (Premium)" "Zoe (Premium)" "Jamie (Enhanced)" "Ava (Enhanced)" "Zoe (Enhanced)" "Samantha (Enhanced)"; do
   if say -v '?' | grep -q "^$name "; then V="$name"; break; fi
 done
 if [ -z "$V" ]; then
-  V="$(say -v '?' | grep -E 'en_(US|GB)' | grep -Ei 'premium|enhanced|улучш|премиум' | head -1 | sed -E 's/[[:space:]]+en_(US|GB).*//')"
+  V="$(say -v '?' | grep -E 'en_(US|GB)' | grep -Ei 'premium|enhanced|улучш|премиум|высш' | head -1 | sed -E 's/[[:space:]]+en_(US|GB).*//')"
 fi
 if [ -z "$V" ]; then
-  echo "Не нашёл голос Ava/Zoe (Premium). Скачай его: Настройки → Универсальный доступ → Чтение вслух → Системный голос → ⓘ → Английский (США)."
+  echo "Не нашёл голос высшего качества. Английские голоса на этом Маке:"
+  say -v '?' | grep -E 'en_(US|GB)' || true
+  echo "Скачай: Настройки → Универсальный доступ → Чтение вслух → Системный голос → ⓘ → Английский → Джейми (высшее качество)."
   exit 1
 fi
 echo "Голос: $V"
