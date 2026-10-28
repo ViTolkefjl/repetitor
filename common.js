@@ -36,6 +36,9 @@
       .trim();
   }
   const same = (ans, key) => String(key).split('|').some(k => norm(k) === norm(ans));
+  // для «собери предложение»: только слова, без знаков препинания
+  const normWords = s => norm(s).replace(/[.,!?;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  const MULTI = ['choice', 'fill', 'match', 'sort', 'order'];
 
   // Ожидаемые буквы для типа «вставь букву»: позиции «_» шаблона, взятые из ключа
   function lettersFromKey(template, key) {
@@ -51,6 +54,18 @@
     if (key == null || key === '') return { state: has ? 'nokey' : 'empty' };
     if (!has) return { state: 'empty' };
 
+    // задания с выбором и перетаскиванием: ключ и ответ — массивы, сверяем по позициям
+    if (MULTI.includes(task.type)) {
+      const keys = Array.isArray(key) ? key : [key];
+      const parts = keys.map((k, i) => {
+        const a = (ans.parts || [])[i];
+        if (!a) return 'empty';
+        if (k == null || k === '') return 'nokey';
+        return task.type === 'order' ? (normWords(a) === normWords(k) ? 'match' : 'miss') : (same(a, k) ? 'match' : 'miss');
+      });
+      const state = parts.every(p => p === 'match') ? 'match' : parts.some(p => p === 'miss') ? 'miss' : 'empty';
+      return { state, parts };
+    }
     if (task.type === 'short' && Array.isArray(task.items)) {
       const keys = Array.isArray(key) ? key : [];
       const parts = task.items.map((_, i) => {
@@ -107,5 +122,8 @@
     .map(([id, t]) => Object.assign({ id }, t))
     .sort((a, b) => (a.n || 0) - (b.n || 0));
 
-  window.REP = { db, now, TS, esc, norm, check, dur, clock, randomKey, sortedTasks, lettersFromKey };
+  // правило (theory) — без ответа и отметок
+  const isTask = t => t.type !== 'theory';
+
+  window.REP = { db, now, TS, esc, norm, check, dur, clock, randomKey, sortedTasks, lettersFromKey, isTask, MULTI };
 })();

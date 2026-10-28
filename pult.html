@@ -43,6 +43,7 @@
 
   <div class="panel hide" id="newPanel">
     <h3>Новое занятие</h3>
+    <div id="ready"></div>
     <label for="importText">Вставь блок, который подготовил Claude</label>
     <textarea id="importText" placeholder='{ "title": "Домашка на 29 октября", "tasks": [ … ] }'></textarea>
     <div class="p-bar" style="margin:12px 0 0">
@@ -65,7 +66,9 @@
 <script src="common.js"></script>
 <script>
 (function () {
-  const { db, now, TS, esc, check, dur, clock, randomKey, sortedTasks, lettersFromKey } = REP;
+  const { db, now, TS, esc, check, dur, clock, randomKey, sortedTasks, lettersFromKey, isTask } = REP;
+  const GAP = /_{2,}/g;
+  const realTasks = l => sortedTasks(l).filter(isTask);
   const $ = id => document.getElementById(id);
   const auth = firebase.auth();
 
@@ -185,7 +188,39 @@
   }
 
   /* ---------- новое занятие ---------- */
-  $('newBtn').onclick = () => $('newPanel').classList.toggle('hide');
+  $('newBtn').onclick = () => {
+    const p = $('newPanel');
+    p.classList.toggle('hide');
+    if (!p.classList.contains('hide')) loadReady();
+  };
+
+  // готовые уроки, которые Claude кладёт в папку lessons/ репозитория
+  async function loadReady() {
+    const box = $('ready');
+    box.innerHTML = '<p class="muted">Ищу готовые уроки…</p>';
+    try {
+      const r = await fetch('lessons/index.json?v=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      const list = (await r.json()).slice().reverse();
+      if (!list.length) { box.innerHTML = ''; return; }
+      box.innerHTML = '<label>Готовые уроки от Claude</label><div class="ready-list">' + list.map((x, i) =>
+        '<div class="ready-item"><span>' + esc(x.title) + (x.added ? ' <span class="muted">· ' + esc(x.added) + '</span>' : '') + '</span>'
+        + '<button class="btn small" data-ready="' + i + '">Создать занятие</button></div>').join('') + '</div>';
+      box.querySelectorAll('[data-ready]').forEach(b => b.onclick = async () => {
+        $('importErr').textContent = '';
+        b.disabled = true;
+        try {
+          const x = list[+b.dataset.ready];
+          const res = await fetch('lessons/' + x.file + '?v=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) throw new Error('файл урока не найден (' + res.status + ')');
+          const d = await res.json();
+          d.tasks.forEach((t, i) => makeTask(t, i + 1));
+          await createLesson(d.title || x.title, d.tasks);
+        } catch (e) { $('importErr').textContent = 'Не получилось: ' + (e.message || e); }
+        b.disabled = false;
+      });
+    } catch (e) { box.innerHTML = ''; }
+  }
   $('linkBtn').onclick = () => $('linkPanel').classList.toggle('hide');
 
   function parseImport(raw) {
@@ -199,20 +234,98 @@
   }
 
   // Превращает задание из импорта в {task, key}
+  const TYPES = ['short', 'steps', 'letters', 'choice', 'fill', 'match', 'sort', 'order', 'theory'];
+  const S = v => v == null ? '' : String(v).trim();
+  // убрать пустые поля (Firebase не принимает undefined, а пустые строки — мусор)
+  function clean(o) {
+    Object.keys(o).forEach(k => { if (o[k] === '' || o[k] == null) delete o[k]; });
+    return o;
+  }
+  function shuffled(arr) {
+    const a = arr.slice();
+    for (let tries = 0; tries < 8; tries++) {
+      for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+      if (a.length < 2 || a.join('\u0001') !== arr.join('\u0001')) break;
+    }
+    return a;
+  }
+  const count = (s, re) => (String(s).match(re) || []).length;
+
   function makeTask(src, n) {
-    const type = ['short', 'steps', 'letters'].includes(src.type) ? src.type : 'short';
-    const task = { n, type, subject: src.subject || '', title: src.title || '', text: src.text || '', hint: src.hint || '' };
-    let key = src.answer != null ? String(src.answer) : '';
+    const type = TYPES.includes(src.type) ? src.type : 'short';
+    const name = S(src.title) || ('№ ' + n);
+    const bad = msg => { throw new Error('Задание «' + name + '»: ' + msg); };
+    const task = { n, type, subject: S(src.subject), title: S(src.title), text: S(src.text), hint: S(src.hint) };
+    let key = src.answer != null ? S(src.answer) : '';
+    const list = (v, what) => { if (!Array.isArray(v) || !v.length) bad('нет списка ' + what + '.'); return v; };
+
     if (type === 'short' && Array.isArray(src.items) && src.items.length) {
-      task.items = src.items.map(it => ({ q: String(it.q || '') }));
-      key = src.items.map(it => it.a != null ? String(it.a) : '');
+      task.items = src.items.map(it => ({ q: S(it.q) }));
+      key = src.items.map(it => S(it.a));
     }
     if (type === 'letters') {
-      task.note = src.text || '';
+      task.note = S(src.text);
       task.text = src.template || src.text || '';
-      if (!/_/.test(task.text)) throw new Error('В задании «' + (src.title || n) + '» нет пропусков «_».');
+      if (!/_/.test(task.text)) bad('нет пропусков «_».');
     }
-    Object.keys(task).forEach(k => { if (task[k] === '') delete task[k]; });
+    if (type === 'choice') {
+      const items = list(src.items, 'вопросов (items)');
+      task.items = items.map((it, i) => {
+        const opts = (it.options || []).map(S).filter(Boolean);
+        if (opts.length < 2) bad('в вопросе ' + (i + 1) + ' меньше двух вариантов.');
+        if (S(it.a) && !opts.includes(S(it.a))) bad('ответ «' + S(it.a) + '» не из вариантов.');
+        return clean({ q: S(it.q), tr: S(it.tr), pic: S(it.pic), options: opts });
+      });
+      key = items.map(it => S(it.a));
+    }
+    if (type === 'fill') {
+      const items = list(src.items, 'предложений (items)');
+      key = [];
+      task.items = items.map((it, i) => {
+        const gaps = count(it.q, GAP);
+        if (!gaps) bad('в предложении ' + (i + 1) + ' нет пропуска «___».');
+        const a = Array.isArray(it.a) ? it.a.map(S) : [S(it.a)];
+        if (a.length !== gaps) bad('в предложении ' + (i + 1) + ' пропусков ' + gaps + ', а ответов ' + a.length + '.');
+        key.push(...a);
+        return clean({ q: S(it.q), tr: S(it.tr), pic: S(it.pic) });
+      });
+      const bank = (Array.isArray(src.bank) && src.bank.length ? src.bank : key).map(S).filter(Boolean);
+      const left = bank.slice();
+      key.forEach(w => { const i = left.indexOf(w); if (w && i < 0) bad('слова «' + w + '» нет среди слов для перетаскивания.'); if (i >= 0) left.splice(i, 1); });
+      task.bank = shuffled(bank);
+    }
+    if (type === 'match') {
+      const pairs = list(src.pairs, 'пар (pairs)');
+      if (pairs.length < 2) bad('нужно хотя бы две пары.');
+      task.left = pairs.map(p => S(p.l));
+      task.right = shuffled(pairs.map(p => S(p.r)));
+      key = pairs.map(p => S(p.r));
+    }
+    if (type === 'sort') {
+      const groups = list(src.groups, 'групп (groups)').map(S);
+      const words = shuffled(list(src.words, 'слов (words)'));
+      words.forEach(w => { if (!groups.includes(S(w.g))) bad('у слова «' + S(w.w) + '» группа «' + S(w.g) + '» не из списка.'); });
+      task.groups = groups;
+      task.words = words.map(w => S(w.w));
+      key = words.map(w => S(w.g));
+    }
+    if (type === 'order') {
+      const items = list(src.items, 'предложений (items)');
+      task.items = items.map((it, i) => {
+        const m = S(it.a).match(/^(.*?)\s*([.!?]*)$/);
+        const words = m[1].split(/\s+/).filter(Boolean);
+        if (words.length < 2) bad('в предложении ' + (i + 1) + ' меньше двух слов.');
+        return clean({ words: shuffled(words), end: m[2], tr: S(it.tr), pic: S(it.pic) });
+      });
+      key = items.map(it => S(it.a));
+    }
+    if (type === 'theory') {
+      task.table = (src.table || []).map(r => clean({ pic: S(r.pic), en: S(r.en), ru: S(r.ru), ex: S(r.ex) }));
+      if (!task.table.length) delete task.table;
+      task.note = S(src.note);
+      key = '';
+    }
+    clean(task);
     return { task, key };
   }
 
@@ -261,11 +374,20 @@
       + (viewId === currentId ? '<span class="tag">открыто у брата</span>' : '<button class="btn light small" id="makeCur">Открыть у брата</button>')
       + '<button class="btn plain small" id="delLesson">Удалить</button></div>';
     if (!tasks.length) html += '<p class="muted">Заданий пока нет — добавь их ниже.</p>';
+    let num = 0;
     tasks.forEach((t, i) => {
-      html += '<section class="sheet row" id="row-' + t.id + '"><div class="margin">' + (i + 1) + '</div><div class="row-grid">'
+      if (t.type === 'theory') {
+        html += '<section class="sheet row theory" id="row-' + t.id + '"><div class="margin"><span class="star">★</span></div>'
+          + '<h3 class="task-title">' + esc(t.title || 'Правило') + '</h3><p class="task-text">Правило с картинками — ответа не требует.</p>'
+          + '<button class="btn plain small" data-del="' + t.id + '">Убрать</button></section>';
+        return;
+      }
+      num++;
+      html += '<section class="sheet row" id="row-' + t.id + '"><div class="margin">' + num + '</div><div class="row-grid">'
         + '<div>' + (t.subject ? '<span class="subject">' + esc(t.subject) + '</span>' : '')
-        + '<h3 class="task-title">' + esc(t.title || 'Задание ' + (i + 1)) + '</h3>'
+        + '<h3 class="task-title">' + esc(t.title || 'Задание ' + num) + '</h3>'
         + '<p class="task-text">' + esc(t.type === 'letters' ? [t.note, t.text].filter(Boolean).join('\n') : (t.text || '')) + '</p>'
+        + (TYPE_NAME[t.type] ? '<span class="tag">' + TYPE_NAME[t.type] + '</span> ' : '')
         + '<button class="btn plain small" data-del="' + t.id + '">Убрать задание</button></div>'
         + '<div><div class="live" id="live-' + t.id + '"></div><div class="chips" id="chips-' + t.id + '"></div>'
         + '<div class="mark hide" id="mark-' + t.id + '"></div>'
@@ -313,6 +435,8 @@
     paintRows();
   }
 
+  const TYPE_NAME = { choice: 'выбор', fill: 'слово в пропуск', match: 'пары', sort: 'по группам', order: 'собери предложение' };
+
   /* ---------- живые ответы ---------- */
   function liveHtml(t, a, res) {
     if (!a || !(a.text || (a.parts && a.parts.length))) return '<span class="ph">пусто</span>';
@@ -325,6 +449,31 @@
         return '<span class="' + cls(res.parts && res.parts[i]) + '">' + esc(L) + '</span>';
       });
     }
+    const P = a.parts || [], RP = res.parts || [];
+    const put = (i, ph) => P[i] ? '<span class="' + cls(RP[i]) + '">' + esc(P[i]) + '</span>' : '<span class="ph">' + (ph || '___') + '</span>';
+    if (t.type === 'choice') {
+      return '<div class="live-items">' + (t.items || []).map((it, i) => {
+        const q = esc(it.q || '');
+        return '<div>' + (/_{2,}/.test(it.q || '') ? q.replace(GAP, () => put(i)) : '<span class="q">' + q + '</span>' + put(i, '…')) + '</div>';
+      }).join('') + '</div>';
+    }
+    if (t.type === 'fill') {
+      let g = 0;
+      return '<div class="live-items">' + (t.items || []).map(it => '<div>' + esc(it.q || '').replace(GAP, () => put(g++)) + '</div>').join('') + '</div>';
+    }
+    if (t.type === 'match') {
+      return '<div class="live-items">' + (t.left || []).map((l, i) => '<div><span class="q">' + esc(l) + ' →</span>' + put(i, '…') + '</div>').join('') + '</div>';
+    }
+    if (t.type === 'sort') {
+      const rows = (t.groups || []).map(g => '<div><span class="q">' + esc(g) + ':</span>'
+        + ((t.words || []).map((w, i) => P[i] === g ? '<span class="' + cls(RP[i]) + '">' + esc(w) + '</span>' : '').filter(Boolean).join(', ') || '<span class="ph">…</span>') + '</div>');
+      const rest = (t.words || []).filter((w, i) => !P[i]);
+      if (rest.length) rows.push('<div><span class="q">не разложены:</span><span class="ph">' + esc(rest.join(', ')) + '</span></div>');
+      return '<div class="live-items">' + rows.join('') + '</div>';
+    }
+    if (t.type === 'order') {
+      return '<div class="live-items">' + (t.items || []).map((it, i) => '<div>' + put(i, '…') + (P[i] ? esc(it.end || '') : '') + '</div>').join('') + '</div>';
+    }
     if (t.type === 'short' && Array.isArray(t.items)) {
       return '<div class="live-items">' + t.items.map((it, i) => {
         const v = (a.parts || [])[i];
@@ -336,6 +485,9 @@
   }
 
   function keyText(t, k) {
+    if (t.type === 'match') return (t.left || []).map((l, i) => l + ' → ' + (k[i] || '?')).join('; ');
+    if (t.type === 'sort') return (t.groups || []).map(g => g + ': ' + (t.words || []).filter((w, i) => k[i] === g).join(', ')).join('; ');
+    if (['choice', 'fill', 'order'].includes(t.type)) return [].concat(k).join('; ');
     if (Array.isArray(k)) return (t.items || []).map((it, i) => it.q + ' ' + (k[i] || '?')).join('; ');
     return String(k);
   }
@@ -344,7 +496,7 @@
     const l = viewId && lessons[viewId];
     if (!l) return;
     const n = now();
-    sortedTasks(l).forEach(t => {
+    realTasks(l).forEach(t => {
       const row = $('row-' + t.id);
       if (!row) return;
       const a = answers[t.id], k = keys[t.id], m = marks[t.id];
@@ -405,7 +557,7 @@
     $('mActive').textContent = active ? dur(active) : '—';
     const l = currentId && lessons[currentId];
     if (l) {
-      const ts = sortedTasks(l);
+      const ts = realTasks(l);
       const ok = viewId === currentId ? ts.filter(t => marks[t.id] && marks[t.id].s === 'ok').length : null;
       $('mDone').textContent = ok == null ? '—' : ok + ' из ' + ts.length;
     } else $('mDone').textContent = '—';
@@ -413,7 +565,7 @@
   function taskNum(id) {
     const l = currentId && lessons[currentId];
     if (!l || !id) return 0;
-    return sortedTasks(l).findIndex(t => t.id === id) + 1;
+    return realTasks(l).findIndex(t => t.id === id) + 1;
   }
 
   /* ---------- ручное добавление задания ---------- */

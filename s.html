@@ -15,9 +15,10 @@
 <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-database-compat.js"></script>
 <script src="common.js"></script>
+<script src="english.js"></script>
 <script>
 (function () {
-  const { db, now, TS, esc, sortedTasks } = REP;
+  const { db, now, TS, esc, sortedTasks, isTask } = REP;
   const app = document.getElementById('app');
   const room = new URLSearchParams(location.hash.slice(1)).get('k');
 
@@ -97,13 +98,17 @@
 
     let html = '<header class="s-head"><h1>' + esc(lesson.title || 'Домашка') + '</h1><div class="dots" id="dots" aria-label="Прогресс"></div></header>';
     if (!tasks.length) html += '<p class="muted">Учитель ещё добавляет задания — они появятся здесь сами.</p>';
-    html += '<div class="banner hide" id="done">Всё верно! Теперь аккуратно перепиши в тетрадь ✍️</div>';
+    const written = tasks.some(t => ['short', 'steps', 'letters'].includes(t.type));
+    html += '<div class="banner hide" id="done">' + (written ? 'Всё верно! Теперь аккуратно перепиши в тетрадь ✍️' : 'Всё верно! Урок пройден, молодец 🎉') + '</div>';
+    let num = 0;
     tasks.forEach((t, i) => {
-      html += '<section class="sheet" data-task="' + t.id + '">'
-        + '<div class="margin">' + (i + 1) + '</div>'
+      const th = t.type === 'theory';
+      if (!th) num++;
+      html += '<section class="sheet' + (th ? ' theory' : '') + '" data-task="' + t.id + '">'
+        + '<div class="margin">' + (th ? '<span class="star" title="Правило">★</span>' : num) + '</div>'
         + (t.subject ? '<span class="subject">' + esc(t.subject) + '</span>' : '')
         + '<h2 class="task-title">' + esc(t.title || ('Задание ' + (i + 1))) + '</h2>'
-        + (t.type !== 'letters' && t.text ? '<p class="task-text">' + esc(t.text) + '</p>' : '')
+        + (t.type !== 'letters' && t.type !== 'theory' && t.text ? '<p class="task-text">' + esc(t.text) + '</p>' : '')
         + (t.type === 'letters' && t.note ? '<p class="task-text">' + esc(t.note) + '</p>' : '')
         + (t.hint ? '<button class="btn light small hint-btn" data-hint="' + t.id + '">Подсказка</button><div class="hint hide" id="hint-' + t.id + '">' + esc(t.hint) + '</div>' : '')
         + field(t)
@@ -111,6 +116,15 @@
         + '</section>';
     });
     app.innerHTML = html;
+
+    tasks.filter(t => EN.TYPES.includes(t.type)).forEach(t => {
+      const sec = app.querySelector('[data-task="' + t.id + '"]');
+      EN.mount(sec, t, answers[t.id], (parts, text) => {
+        const a = answers[t.id] = answers[t.id] || {};
+        a.parts = parts; a.text = text;
+        save(t.id, a);
+      }, () => !!(marks[t.id] && marks[t.id].s === 'ok'));
+    });
 
     app.querySelectorAll('[data-key]').forEach(el => {
       el.addEventListener('input', onInput);
@@ -146,6 +160,7 @@
 
   function field(t) {
     const a = answers[t.id] || {};
+    if (EN.TYPES.includes(t.type)) return EN.html(t, a);
     if (t.type === 'short' && Array.isArray(t.items)) {
       return '<div class="items">' + t.items.map((it, i) =>
         '<label class="item"><span class="q">' + esc(it.q) + '</span>'
@@ -200,14 +215,17 @@
     } else {
       a.text = el.value;
     }
+    save(taskId, a);
+  }
 
+  function save(taskId, a) {
     const n = now();
     if (!a.start) a.start = n;
     const prev = lastInput[taskId];
     if (prev && n - prev < 60000) a.active = (a.active || 0) + (n - prev);
     lastInput[taskId] = n;
 
-    focusTask = taskId;
+    if (focusTask !== taskId) { focusTask = taskId; presence(); }
     const upd = { text: a.text, t: TS, start: a.start, active: a.active || 0 };
     if (a.parts) upd.parts = a.parts;
     R.child('answers/' + lessonId + '/' + taskId).update(upd);
@@ -223,6 +241,7 @@
       const m = marks[t.id];
       const sec = box.closest('.sheet');
       sec.querySelectorAll('[data-key]').forEach(el => { el.readOnly = !!(m && m.s === 'ok'); });
+      if (sec._redraw) sec._redraw();
       // перерисовываем только изменившуюся пометку, чтобы анимация «ручки» не повторялась на всех сразу
       const sig = m ? m.s + '|' + (m.c || '') + '|' + m.t : '';
       if (box.dataset.sig === sig) return;
@@ -234,7 +253,8 @@
         : '<span class="sign">✗</span><span>Исправь' + (m.c ? ': ' + esc(m.c) : '') + '</span>';
     });
     paintDots();
-    const done = tasks.length && tasks.every(t => marks[t.id] && marks[t.id].s === 'ok');
+    const real = tasks.filter(isTask);
+    const done = real.length && real.every(t => marks[t.id] && marks[t.id].s === 'ok');
     const b = document.getElementById('done');
     if (b) b.classList.toggle('hide', !done);
   }
@@ -242,10 +262,11 @@
   function paintDots() {
     const d = document.getElementById('dots');
     if (!d) return;
-    d.innerHTML = tasks.map((t, i) => {
+    d.innerHTML = tasks.filter(isTask).map((t, i) => {
       const m = marks[t.id];
       const a = answers[t.id];
-      const cls = m ? (m.s === 'ok' ? 'ok' : 'fix') : (a && a.text && a.text.replace(/_/g, '').trim() ? 'typed' : '');
+      const typed = a && ((a.text && a.text.replace(/_/g, '').trim()) || (a.parts && a.parts.some(p => p)));
+      const cls = m ? (m.s === 'ok' ? 'ok' : 'fix') : (typed ? 'typed' : '');
       return '<i class="' + cls + '" title="Задание ' + (i + 1) + '"></i>';
     }).join('');
   }
