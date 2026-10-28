@@ -92,7 +92,7 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   ok(await fc.locator('.back').isVisible() && (await fc.locator('.back .ru').textContent()) === 'всегда', 'на обороте перевод');
   ok((await S.$$('[data-task="t9"] .trick')).length === 4 && !!(await S.$('[data-task="t9"] .how ol')), 'есть лайфхаки и «как выбрать по шагам»');
   await S.locator('[data-task="t3"] .left [data-say]').first().click();
-  ok((await S.evaluate(() => window.__said.slice(-1)[0].text)) === 'I', '🔊 и в задании на пары');
+  ok((await S.evaluate(() => window.__said.slice(-1)[0].text)) === 'eye', '🔊 и в задании на пары; «I» читается как [ай], а не «capital I»');
   // «your / yours» — по отдельности, с паузой
   await S.evaluate(() => { window.__said = []; });
   const yy = S.locator('[data-task="t6"] [data-say="your / yours"]');

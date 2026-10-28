@@ -54,7 +54,8 @@
     const next = i => {
       if (id !== queueId || i >= parts.length) return;
       const words = parts[i].split(/\s+/).length;
-      const u = new SpeechSynthesisUtterance(parts[i]);
+      // одиночную «I» голоса Apple читают как «capital I» — подставляем «eye», это то же звучание [ай]
+      const u = new SpeechSynthesisUtterance(/^I[.!?]?$/.test(parts[i]) ? 'eye' : parts[i]);
       u.lang = voice ? voice.lang : 'en-US';
       if (voice) u.voice = voice;
       u.rate = slow ? 0.5 : words <= 2 ? 0.68 : 0.78;
