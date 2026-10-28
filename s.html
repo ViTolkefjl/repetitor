@@ -456,7 +456,7 @@
       cls = 'try';
       html = (a.fbn > 1 ? '<b>Верно ' + a.fbk + ' из ' + a.fbn + ' 👍</b> Найди и исправь ' + (a.fbn - a.fbk === 1 ? 'одну ошибку.' : (a.fbn - a.fbk) + ' ' + plural(a.fbn - a.fbk, 'ошибку', 'ошибки', 'ошибок') + '.')
         : '<b>Пока не так.</b> Подумай ещё раз.')
-        + (t.why ? '<div class="why">Вспомни: ' + esc(t.why) + '</div>' : '<div class="muted">Перечитай правило ★ выше, если оно есть.</div>');
+        + (t.alt ? '<div class="alt"><b>Объясню по-другому</b>' + esc(t.alt) + '</div>' : t.why ? '<div class="why">' + esc(t.why) + '</div>' : '');
     } else if (lvl === 2) {
       cls = 'try';
       html = (a.fbn > 1 ? '<b>Зелёное — верно, молодец!</b> Над жёлтым подумай ещё — рядом подсказка.' : '<b>Ещё не так.</b> Вот подсказка:')
@@ -465,6 +465,7 @@
         + '<div class="muted">Последняя попытка — потом разберём вместе.</div>';
     }
     if (st === 'help' && taskWhy.length) html += taskWhy.map(w => '<div class="why">' + esc(w) + '</div>').join('');
+    if (st === 'help' && t.alt) html += '<div class="alt"><b>Запомни так</b>' + esc(t.alt) + '</div>';
     box.className = 'fb ' + cls + (html ? '' : ' hide');
     if (box.innerHTML !== html) box.innerHTML = html;
     if (fresh && html) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });

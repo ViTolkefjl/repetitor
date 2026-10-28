@@ -310,7 +310,7 @@
     const type = TYPES.includes(src.type) ? src.type : 'short';
     const name = S(src.title) || ('№ ' + n);
     const bad = msg => { throw new Error('Задание «' + name + '»: ' + msg); };
-    const task = { n, type, subject: S(src.subject), title: S(src.title), text: S(src.text), hint: S(src.hint), why: S(src.why) };
+    const task = { n, type, subject: S(src.subject), title: S(src.title), text: S(src.text), hint: S(src.hint), why: S(src.why), alt: S(src.alt) };
     let key = src.answer != null ? S(src.answer) : '';
     const list = (v, what) => { if (!Array.isArray(v) || !v.length) bad('нет списка ' + what + '.'); return v; };
 
@@ -375,8 +375,16 @@
       key = items.map(it => S(it.a));
     }
     if (type === 'theory') {
-      task.table = (src.table || []).map(r => clean({ pic: S(r.pic), en: S(r.en), ru: S(r.ru), ex: S(r.ex) }));
+      const cardOf = r => clean({ pic: S(r.pic), en: S(r.en), ru: S(r.ru), ex: S(r.ex) });
+      task.table = (src.table || []).map(cardOf);
       if (!task.table.length) delete task.table;
+      if (Array.isArray(src.groups) && src.groups.length) {
+        task.groups = src.groups.map(g => clean({ name: S(g.name), sub: S(g.sub), icon: S(g.icon), color: /^#[0-9a-f]{3,8}$/i.test(S(g.color)) ? S(g.color) : '',
+          desc: S(g.desc), formula: S(g.formula), cards: (g.cards || []).map(cardOf) }));
+      }
+      if (src.flip) task.flip = true;
+      if (Array.isArray(src.tricks) && src.tricks.length) task.tricks = src.tricks.map(x => clean({ icon: S(x.icon), text: S(x.text) }));
+      if (Array.isArray(src.how) && src.how.length) task.how = src.how.map(S);
       task.note = S(src.note);
       key = '';
     }
@@ -675,7 +683,8 @@
       + '<div id="fTplBox" class="hide"><label for="fTpl">Слова с пропусками — каждый пропуск «_»</label><input id="fTpl" placeholder="к_рова, м_локо"></div>'
       + '<div id="fItemsBox" class="hide"><label for="fItems">Пункты — каждый с новой строки: вопрос | ответ</label><textarea id="fItems" placeholder="36 : 4 = | 9\n7 · 8 = | 56" style="font-family:inherit;font-size:16px"></textarea></div>'
       + '<div id="fAnsBox"><label for="fAns" id="fAnsL">Правильный ответ (ученик не видит)</label><input id="fAns"></div>'
-      + '<label for="fWhy">Объяснение при ошибке — правило, без ответа</label><input id="fWhy" placeholder="например: после глагола — me, him, them">'
+      + '<label for="fWhy">Напоминание правила при ошибке — без ответа</label><input id="fWhy" placeholder="например: после глагола — me, him, them">'
+      + '<label for="fAlt">Объяснение по-другому — проще, с другого угла</label><input id="fAlt" placeholder="например: подставь по-русски «меня» — если подходит, это me">'
       + '<button class="btn" id="fAdd" style="margin-top:12px">Добавить</button><div class="err" id="fErr"></div></div>';
   }
   function bindAddForm() {
@@ -693,7 +702,7 @@
       $('fErr').textContent = '';
       const v = type.value;
       const src = { type: v === 'items' ? 'short' : v, subject: $('fSubject').value.trim(), title: $('fTitle').value.trim(),
-        text: $('fText').value.trim(), hint: $('fHint').value.trim(), answer: $('fAns').value.trim(), why: $('fWhy').value.trim() };
+        text: $('fText').value.trim(), hint: $('fHint').value.trim(), answer: $('fAns').value.trim(), why: $('fWhy').value.trim(), alt: $('fAlt').value.trim() };
       if (v === 'items') {
         src.items = $('fItems').value.split('\n').map(s => s.trim()).filter(Boolean).map(s => {
           const i = s.lastIndexOf('|');

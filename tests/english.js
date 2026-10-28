@@ -12,6 +12,13 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
 (async () => {
   const browser = await chromium.launch();
   const ctx = await browser.newContext();
+  // заглушка синтеза речи: запоминаем, что «произнесли»
+  await ctx.addInitScript(() => {
+    window.__said = [];
+    window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
+      speak: u => window.__said.push(u.text), cancel() {}, getVoices: () => [{ lang: 'en-US', name: 'Samantha' }], addEventListener() {} } });
+  });
   await ctx.route(/gstatic\.com\/firebasejs\/.*\.js$/, r => r.fulfill({ contentType: 'text/javascript', body: mock }));
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
   const errs = [];
@@ -63,6 +70,21 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
     for (let k = 1; k <= 8; k++) await S.mouse.move(c.x + (s.x + s.width / 2 - c.x) * k / 8, c.y + (s.y + s.height / 2 - c.y) * k / 8);
     await S.mouse.up();
   }
+
+  // правило про времена: две группы рядом, перевёртыши, озвучка, лайфхаки
+  ok((await S.$$('[data-task="t9"] .vs-col')).length === 2 && !!(await S.$('[data-task="t9"] .vs-or')), 'Simple и Continuous — две колонки рядом');
+  const fc = S.locator('[data-task="t9"] [data-flip]').first();
+  await fc.scrollIntoViewIfNeeded();
+  await fc.locator('[data-say]').click();
+  ok((await S.evaluate(() => window.__said.slice(-1)[0])) === 'always', '🔊 произносит слово');
+  ok(!(await fc.evaluate(e => e.classList.contains('flipped'))), '🔊 не переворачивает карточку');
+  await fc.click({ position: { x: 10, y: 10 } });
+  ok(await fc.evaluate(e => e.classList.contains('flipped')), 'нажатие переворачивает карточку');
+  await S.waitForTimeout(500);
+  ok(await fc.locator('.back').isVisible() && (await fc.locator('.back .ru').textContent()) === 'всегда', 'на обороте перевод');
+  ok((await S.$$('[data-task="t9"] .trick')).length === 4 && !!(await S.$('[data-task="t9"] .how ol')), 'есть лайфхаки и «как выбрать по шагам»');
+  await S.locator('[data-task="t3"] .left [data-say]').first().click();
+  ok((await S.evaluate(() => window.__said.slice(-1)[0])) === 'I', '🔊 и в задании на пары');
 
   // выбор
   await S.click('[data-task="t2"] .opt[data-ci="0"][data-opt="he"]');
@@ -141,12 +163,14 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   await S.click('[data-task="t11"] .opt[data-ci="1"][data-opt="reads"]');
   await S.click('[data-check="t11"]');
   ok((await S.textContent('#fb-t11')).includes('Верно 1 из 2'), 'выбор, шаг 1: счёт');
+  ok((await S.textContent('#fb-t11 .alt')).includes('Объясню по-другому') && (await S.textContent('#fb-t11 .alt')).includes('мороженое'), 'шаг 1: другое объяснение, а не «перечитай правило»');
   await S.click('[data-check="t11"]');
   ok(await S.$eval('[data-task="t11"] .choice-item:nth-child(1)', e => e.classList.contains('fb-ok')), 'выбор, шаг 2: верное зелёное');
   await S.click('[data-task="t11"] .opt[data-ci="0"][data-opt="is reading"]');
   ok(await S.$eval('[data-task="t11"] .opt[data-ci="0"][data-opt="reads"]', e => e.classList.contains('on')), 'выбор, шаг 2: зелёное не переключить');
   await S.click('[data-check="t11"]');
   ok((await S.textContent('[data-task="t11"]')).includes('Правильно: is reading'), 'выбор, шаг 3: правильный ответ');
+  ok((await S.textContent('#fb-t11')).includes('Запомни так'), 'шаг 3: повторяем объяснение «запомни так»');
   // перетаскивание: шаг 2 закрепляет верные слова
   await drag('t10', 'always', '[data-slot="G0"]');
   for (const w of ['Look!', 'at the moment', 'Listen!']) await drag('t10', w, '[data-slot="G1"]');

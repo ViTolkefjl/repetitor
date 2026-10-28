@@ -9,20 +9,89 @@
   const pic = p => p ? '<div class="pic" aria-hidden="true">' + esc(p) + '</div>' : '';
   const tr = t => t ? '<div class="tr">' + esc(t) + '</div>' : '';
 
+  /* ---------- озвучка (синтез речи браузера: Safari и Chrome на Mac умеют по-английски) ---------- */
+  const canSay = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  let voice = null;
+  function pickVoice() {
+    if (!canSay) return;
+    const vs = speechSynthesis.getVoices() || [];
+    voice = vs.find(v => /^en[-_]US/i.test(v.lang) && /samantha|alex|google us/i.test(v.name))
+      || vs.find(v => /^en[-_](US|GB)/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+  }
+  if (canSay) { pickVoice(); try { speechSynthesis.addEventListener('voiceschanged', pickVoice); } catch (e) {} }
+  function say(text) {
+    if (!canSay || !text) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(text).replace(/[«»"]/g, ''));
+    u.lang = voice ? voice.lang : 'en-US';
+    if (voice) u.voice = voice;
+    u.rate = 0.8;
+    speechSynthesis.speak(u);
+  }
+  const isEn = s => /[A-Za-z]/.test(s || '') && !/[А-Яа-яЁё]/.test(s || '');
+  const sayBtn = text => canSay && isEn(text) ? '<button type="button" class="say" data-say="' + esc(text) + '" aria-label="Послушать, как произносится">🔊</button>' : '';
+
   /* ---------- правило ---------- */
+  // карточка: обычная или «перевёртыш» (спереди английское слово и 🔊, сзади перевод)
+  function card(r, i, flip, color) {
+    const c = color || COLORS[i % COLORS.length];
+    if (!flip) {
+      return '<div class="rule-cell" style="--c:' + c + '">' + pic(r.pic)
+        + (r.en ? '<div class="en">' + esc(r.en) + sayBtn(r.en) + '</div>' : '')
+        + (r.ru ? '<div class="ru">' + esc(r.ru) + '</div>' : '')
+        + (r.ex ? '<div class="ex">' + esc(r.ex) + sayBtn(r.ex) + '</div>' : '')
+        + '</div>';
+    }
+    return '<div class="flip" style="--c:' + c + '" data-flip tabindex="0" role="button" aria-label="Перевернуть карточку ' + esc(r.en || '') + '">'
+      + '<div class="flip-in"><div class="face front">' + pic(r.pic) + '<div class="en">' + esc(r.en || '') + '</div>' + sayBtn(r.en)
+      + '<div class="turn" aria-hidden="true">↻</div></div>'
+      + '<div class="face back"><div class="ru">' + esc(r.ru || '') + '</div>' + (r.ex ? '<div class="ex">' + esc(r.ex) + '</div>' : '') + '</div></div></div>';
+  }
+
   function theoryHtml(t) {
     let h = '';
     if (t.text) h += '<p class="task-text">' + esc(t.text) + '</p>';
+    const flip = !!t.flip;
+    if (flip) h += '<p class="flip-hint">Нажми на карточку — она перевернётся и покажет перевод. 🔊 — послушать.</p>';
+    if (Array.isArray(t.groups) && t.groups.length) {
+      h += '<div class="vs">' + t.groups.map((g, gi) => {
+        const c = g.color || COLORS[(gi * 3) % COLORS.length];
+        return (gi ? '<div class="vs-or" aria-hidden="true">или</div>' : '')
+          + '<div class="vs-col" style="--c:' + c + '"><div class="vs-head">'
+          + (g.icon ? '<span class="vs-icon">' + esc(g.icon) + '</span>' : '')
+          + '<div><div class="vs-name">' + esc(g.name || '') + sayBtn(g.name) + '</div>' + (g.sub ? '<div class="vs-sub">' + esc(g.sub) + '</div>' : '') + '</div></div>'
+          + (g.desc ? '<p class="vs-desc">' + esc(g.desc) + '</p>' : '')
+          + (g.formula ? '<div class="vs-formula">' + esc(g.formula) + sayBtn(g.formula) + '</div>' : '')
+          + '<div class="vs-cards">' + (g.cards || []).map((r, i) => card(r, i, flip, c)).join('') + '</div></div>';
+      }).join('') + '</div>';
+    }
     if (Array.isArray(t.table) && t.table.length) {
-      h += '<div class="rule-grid">' + t.table.map((r, i) =>
-        '<div class="rule-cell" style="--c:' + COLORS[i % COLORS.length] + '">' + pic(r.pic)
-        + (r.en ? '<div class="en">' + esc(r.en) + '</div>' : '')
-        + (r.ru ? '<div class="ru">' + esc(r.ru) + '</div>' : '')
-        + (r.ex ? '<div class="ex">' + esc(r.ex) + '</div>' : '')
-        + '</div>').join('') + '</div>';
+      h += '<div class="rule-grid">' + t.table.map((r, i) => card(r, i, flip)).join('') + '</div>';
+    }
+    if (Array.isArray(t.how) && t.how.length) {
+      h += '<div class="how"><b>Как выбрать — по шагам</b><ol>' + t.how.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol></div>';
+    }
+    if (Array.isArray(t.tricks) && t.tricks.length) {
+      h += '<div class="tricks">' + t.tricks.map(x => '<div class="trick"><span class="tr-icon" aria-hidden="true">' + esc(x.icon || '💡') + '</span><div><b>Лайфхак</b><p>' + esc(x.text || '') + '</p></div></div>').join('') + '</div>';
     }
     if (t.note) h += '<div class="remember"><b>Запомни</b>' + esc(t.note) + '</div>';
     return h;
+  }
+
+  // перевёртыши и 🔊 работают в любом задании
+  function bindCommon(sec) {
+    if (sec._common) return;
+    sec._common = true;
+    sec.addEventListener('click', e => {
+      const sb = e.target.closest('[data-say]');
+      if (sb) { e.stopPropagation(); say(sb.dataset.say); return; }
+      const f = e.target.closest('[data-flip]');
+      if (f) f.classList.toggle('flipped');
+    });
+    sec.addEventListener('keydown', e => {
+      const f = e.target.closest && e.target.closest('[data-flip]');
+      if (f && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); f.classList.toggle('flipped'); }
+    });
   }
 
   /* ---------- разметка заданий ---------- */
@@ -51,7 +120,7 @@
     }
     if (t.type === 'match') {
       body = '<div class="match-list">' + (t.left || []).map((l, i) =>
-        '<div class="match-row"><span class="left">' + esc(l) + '</span><span class="arrow" aria-hidden="true">→</span><span class="slot one" data-slot="m' + i + '"></span></div>').join('')
+        '<div class="match-row"><span class="left">' + esc(l) + sayBtn(l) + '</span><span class="arrow" aria-hidden="true">→</span><span class="slot one" data-slot="m' + i + '"></span></div>').join('')
         + '</div><div class="bank" data-slot="B"></div>';
     }
     if (t.type === 'sort') {
@@ -83,6 +152,7 @@
 
   /* ---------- подключение интерактива ---------- */
   function mount(sec, t, a, onChange, isLocked) {
+    bindCommon(sec);
     if (t.type === 'theory') return;
     if (t.type === 'choice') return mountChoice(sec, t, a, onChange, isLocked);
 
@@ -262,5 +332,5 @@
     return null;
   }
 
-  window.EN = { html, mount, itemEls, whyHost, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
+  window.EN = { html, mount, itemEls, whyHost, say, canSay, TYPES: ['choice', 'fill', 'match', 'sort', 'order', 'theory'] };
 })();

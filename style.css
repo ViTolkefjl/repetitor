@@ -395,3 +395,54 @@ textarea.answer-in { min-height: 150px; resize: vertical; line-height: 1.45; }
 /* в разобранном с подсказкой задании неверный выбор не должен выглядеть «зелёным» */
 .choice-list.locked .fb-bad .opt.on, .fb-bad .opt.on { background: #f0b14a; border-color: #f0b14a; color: #4a2c00; }
 .board.locked .fb-bad .wchip, .board.locked .wchip.fb-bad { background: #fff3dc; border-color: #f0b14a; color: #7a4a00; }
+
+/* ---------- правило: две группы рядом, перевёртыши, озвучка, лайфхаки ---------- */
+.say {
+  border: 0; background: transparent; font-size: 18px; line-height: 1; padding: 2px 4px; margin-left: 4px;
+  vertical-align: middle; border-radius: 8px; cursor: pointer;
+}
+.say:hover { background: var(--ink-soft); }
+.flip-hint { font-size: 15px; color: var(--muted); margin: -6px 0 12px; }
+
+.vs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: stretch; }
+@media (max-width: 760px) { .vs { grid-template-columns: 1fr; } .vs-or { justify-self: center; } }
+.vs-or {
+  align-self: center; font-weight: 700; color: var(--muted); background: #fff; border: 2px solid var(--line);
+  border-radius: 99px; padding: 6px 10px; font-size: 15px;
+}
+.vs-col { border: 3px solid var(--c); border-radius: 18px; padding: 14px; background: #fff; display: flex; flex-direction: column; gap: 10px; }
+.vs-head { display: flex; gap: 10px; align-items: center; }
+.vs-icon { font-size: 40px; line-height: 1; }
+.vs-name { font-size: 22px; font-weight: 700; color: var(--c); }
+.vs-sub { font-size: 16px; font-weight: 700; }
+.vs-desc { margin: 0; font-size: 16px; }
+.vs-formula { font-size: 17px; font-weight: 700; background: #f6f7fb; border-radius: 10px; padding: 8px 10px; }
+.vs-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+
+.flip { perspective: 800px; min-height: 104px; cursor: pointer; outline: none; }
+.flip:focus-visible .flip-in { box-shadow: 0 0 0 3px var(--ink); }
+.flip-in { position: relative; height: 100%; min-height: 104px; transition: transform .45s; transform-style: preserve-3d; -webkit-transform-style: preserve-3d; border-radius: 14px; }
+.flip.flipped .flip-in { transform: rotateY(180deg); }
+.face {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  padding: 8px; border-radius: 14px; border: 2px solid var(--c); background: #fff; text-align: center;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+}
+.face.back { transform: rotateY(180deg); background: color-mix(in srgb, var(--c) 10%, #fff); }
+.face .pic { width: auto; padding: 2px 6px; font-size: 26px; background: transparent; }
+.face .en { font-size: 19px; font-weight: 700; color: var(--c); line-height: 1.2; }
+.face .ru { font-size: 19px; font-weight: 700; }
+.face .ex { font-size: 14px; color: var(--muted); }
+.face .turn { position: absolute; right: 8px; bottom: 4px; font-size: 14px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .flip-in { transition: none; } }
+
+.how { margin-top: 14px; border-radius: 14px; background: var(--ink-soft); padding: 12px 16px; }
+.how ol { margin: 6px 0 0; padding-left: 22px; }
+.how li { margin: 4px 0; }
+.tricks { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-top: 14px; }
+.trick { display: flex; gap: 10px; border: 2px dashed #efb14c; border-radius: 14px; padding: 10px 12px; background: #fffaf0; }
+.tr-icon { font-size: 30px; line-height: 1; }
+.trick b { color: #b8650a; font-size: 14px; }
+.trick p { margin: 2px 0 0; font-size: 16px; }
+.alt { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: #fff; border: 2px solid #efb14c; }
+.alt b { display: block; color: #b8650a; margin-bottom: 2px; }
