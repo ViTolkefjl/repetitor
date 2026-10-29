@@ -65,3 +65,62 @@ open -R "$HOME/Desktop/repetitor-audio.zip"
 `;
 fs.writeFileSync(path.join(__dirname, 'make-audio.sh'), sh, { mode: 0o755 });
 console.log('Фраз:', list.length);
+
+/* ---------- ElevenLabs: tools/eleven.sh ----------
+   bash eleven.sh          — образцы трёх голосов на Рабочий стол (repetitor-voices/)
+   bash eleven.sh alice    — вся озвучка выбранным голосом → repetitor-audio.zip
+   Ключ API вводится скрыто и никуда не сохраняется. Скорость — родная настройка ElevenLabs (без растягивания звука). */
+const elText = s => /[.!?]$/.test(s) ? s : s + '.';        // точка в конце — ровная интонация у одиночных слов
+const elLines = list.map(p => 'gen ' + audioId(p) + ' ' + q(elText(p)) + '   # ' + p.replace(/\n/g, ' '));
+const el = `#!/bin/bash
+# Озвучка английских фраз сайта «Репетитор» голосом ElevenLabs. Фраз: ${list.length}.
+# Сгенерировано tools/audio-phrases.js — не правь вручную.
+set -e
+VOICE_alice=Xb7hH8MSUJpSbSDYk0k2      # Alice — британский, чёткий, для обучения
+VOICE_lily=pFZP5JQG7iQjIQuC4Bku       # Lily — британский, тёплый, чёткий
+VOICE_matilda=XrExE9yKIg1WjnnlVkGX    # Matilda — спокойный, профессиональный
+MODEL=eleven_multilingual_v2
+NORMAL=0.9
+SLOW=0.75
+
+read -rsp "Вставь API-ключ ElevenLabs и нажми Enter (символы не видны): " KEY; echo
+[ -n "$KEY" ] || { echo "Ключ пустой."; exit 1; }
+
+tts() {   # голос скорость текст файл
+  local t; t=$(printf '%s' "$3" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g')
+  local body="{\\"text\\":\\"$t\\",\\"model_id\\":\\"$MODEL\\",\\"voice_settings\\":{\\"stability\\":0.6,\\"similarity_boost\\":0.8,\\"style\\":0,\\"use_speaker_boost\\":true,\\"speed\\":$2}}"
+  local code; code=$(curl -sS -o "$4" -w "%{http_code}" -X POST "https://api.elevenlabs.io/v1/text-to-speech/$1?output_format=mp3_44100_128" \\
+    -H "xi-api-key: $KEY" -H "Content-Type: application/json" -d "$body")
+  if [ "$code" != "200" ]; then
+    echo; echo "ElevenLabs ответил ошибкой $code:"; cat "$4"; echo
+    echo "Проверь ключ (нужно право Text to Speech), остаток кредитов и включённый VPN."
+    rm -f "$4"; exit 1
+  fi
+}
+
+if [ -z "$1" ]; then
+  D="$HOME/Desktop/repetitor-voices"; rm -rf "$D"; mkdir -p "$D"
+  for v in alice lily matilda; do
+    id=$(eval echo \\$VOICE_$v)
+    printf "Образец: %s… " "$v"
+    tts "$id" "$NORMAL" "I. You. Your. Yours. She is reading now." "$D/$v.mp3"
+    tts "$id" "$SLOW" "Your. Yours. She is reading now." "$D/$v-slow.mp3"
+    echo "готово"
+  done
+  echo "Послушай файлы в папке repetitor-voices на Рабочем столе и напиши Claude, какой голос взять."
+  open "$D"; exit 0
+fi
+
+V=$(eval echo \\$VOICE_$1)
+[ -n "$V" ] || { echo "Нет такого голоса: $1 (есть alice, lily, matilda)"; exit 1; }
+D="$HOME/Desktop/repetitor-audio"; rm -rf "$D"; mkdir -p "$D"
+echo "Голос: $1. Записываю ${list.length} фраз (обычно и медленно)…"
+gen() { tts "$V" "$NORMAL" "$2" "$D/$1.mp3"; tts "$V" "$SLOW" "$2" "$D/$1-s.mp3"; printf "."; }
+${elLines.join('\n')}
+echo
+cd "$HOME/Desktop" && rm -f repetitor-audio.zip && zip -qr repetitor-audio.zip repetitor-audio
+echo "Готово: на Рабочем столе repetitor-audio.zip — пришли его Claude."
+open -R "$HOME/Desktop/repetitor-audio.zip"
+`;
+fs.writeFileSync(path.join(__dirname, 'eleven.sh'), el, { mode: 0o755 });
+console.log('eleven.sh: символов на одну скорость ≈', list.map(elText).join('').length);

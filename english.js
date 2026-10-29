@@ -22,8 +22,12 @@
     for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     return h.toString(16).padStart(8, '0');
   }
-  let recorded = new Set();
-  fetch('audio/index.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : []).then(ids => { recorded = new Set(ids || []); }).catch(() => {});
+  let recorded = new Set(), audioExt = 'm4a';
+  // audio/index.json: { ext: 'mp3', ids: [...] } (старый формат — просто массив id для .m4a)
+  fetch('audio/index.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : []).then(x => {
+    if (Array.isArray(x)) recorded = new Set(x);
+    else if (x && Array.isArray(x.ids)) { recorded = new Set(x.ids); audioExt = x.ext || 'mp3'; }
+  }).catch(() => {});
 
   const ROBOT = /compact|eloquence|albert|bad news|bahh|bells|boing|bubbles|cellos|wobble|good news|jester|organ|superstar|trinoids|whisper|zarvox|fred|junior|ralph|kathy|grandma|grandpa|rocko|shelley|flo|eddy|reed|sandy/i;
   function score(v) {
@@ -69,7 +73,7 @@
     speechSynthesis.speak(u);
   }
   function playFile(part, slow, done) {
-    const a = new Audio('audio/' + audioId(part) + (slow ? '-s' : '') + '.m4a');
+    const a = new Audio('audio/' + audioId(part) + (slow ? '-s' : '') + '.' + audioExt);
     playing = a;
     a.onended = done;
     a.onerror = () => speakSynth(part, slow, done);       // файла нет — говорим синтезом

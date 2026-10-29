@@ -25,7 +25,7 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
   // FNV-1a от «always» — как в english.js
   const fnv = t => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };
-  await ctx.route(/\/audio\/index\.json/, r => r.fulfill({ contentType: 'application/json', body: JSON.stringify([fnv('always')]) }));
+  await ctx.route(/\/audio\/index\.json/, r => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ext: 'mp3', ids: [fnv('always')] }) }));
   const errs = [];
 
   const T = await ctx.newPage();
@@ -87,9 +87,9 @@ const ok = (c, m) => log.push((c ? 'PASS ' : 'FAIL ') + m);
   await fc.scrollIntoViewIfNeeded();
   await fc.locator('[data-say]').click();
   const alwaysId = await S.evaluate(() => EN.audioId('always'));
-  ok((await S.evaluate(() => window.__played.slice(-1)[0])) === 'audio/' + alwaysId + '.m4a', '🔊 играет записанный файл живого голоса, если он есть');
+  ok((await S.evaluate(() => window.__played.slice(-1)[0])) === 'audio/' + alwaysId + '.mp3', '🔊 играет записанный файл живого голоса, если он есть');
   await fc.locator('[data-say]').click();
-  ok((await S.evaluate(() => window.__played.slice(-1)[0])) === 'audio/' + alwaysId + '-s.m4a', 'повторное нажатие — медленная запись');
+  ok((await S.evaluate(() => window.__played.slice(-1)[0])) === 'audio/' + alwaysId + '-s.mp3', 'повторное нажатие — медленная запись');
   // без записи — синтез, медленно, лучшим голосом
   const nv = S.locator('[data-task="t9"] [data-flip]').nth(4);
   await nv.locator('[data-say]').click();

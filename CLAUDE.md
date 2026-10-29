@@ -144,13 +144,15 @@ GitHub Pages обновляется ~1 минуту после пуша.
 
 ## Озвучка живым голосом (записанные файлы)
 
-Синтез речи браузера звучит роботом, а Premium-голоса macOS сайту недоступны. Поэтому английские фразы с 🔊 записываются заранее
-голосом Ava (Premium) на Маке Виталия: `node tools/audio-phrases.js` → `tools/make-audio.sh` (пушим) → Виталий запускает в Терминале
-`curl -fsSL https://vitolkefjl.github.io/repetitor/tools/make-audio.sh -o ~/Desktop/make-audio.sh && bash ~/Desktop/make-audio.sh`
-→ присылает `repetitor-audio.zip` → кладём файлы в `audio/` и запускаем `node tools/audio-index.js`.
-Файл: `audio/<FNV-1a id фразы>.m4a` (обычно) и `-s.m4a` (медленно, как записал Mac). Нет файла — работает синтез браузера.
-НЕ замедлять записи ffmpeg (atempo): Виталию не понравились призвуки — кладём оригиналы из архива как есть.
-После нового урока: снова `node tools/audio-phrases.js`, пушим, просим Виталия запустить команду (запишутся все фразы заново).
+Синтез браузера и голоса macOS (Jamie) Виталий забраковал: нужно чётко, понятно, громко. Решено (29.10.2026): ElevenLabs.
+`node tools/audio-phrases.js` → `tools/eleven.sh` (пушим) → Виталий в Терминале:
+`curl -fsSL https://vitolkefjl.github.io/repetitor/tools/eleven.sh -o ~/Desktop/eleven.sh && bash ~/Desktop/eleven.sh` — образцы
+голосов alice / lily / matilda; потом `bash ~/Desktop/eleven.sh <голос>` — вся озвучка → `repetitor-audio.zip`.
+Ключ API вводится скрыто, нигде не сохраняется. Скорость — родная настройка ElevenLabs (0.9 обычно, 0.75 медленно).
+Приём архива: файлы в `audio/`, `node tools/audio-index.js` (пишет `{ ext, ids }`). Нет файла — синтез браузера.
+НЕ замедлять записи ffmpeg (atempo): Виталию не понравились призвуки. Громкость выравнивать можно (loudnorm), темп — нет.
+Бесплатный тариф ElevenLabs: 10 000 символов в месяц, некоммерческое использование; урок ≈ 1 000 символов (две скорости).
+Старый вариант `tools/make-audio.sh` (голос macOS) оставлен как запасной.
 
 ## Учебники (3 класс, 1 часть) — на Маке Виталия, в репозиторий НЕ класть
 Папка `/Users/vitaliy/Костя/Учебники /` (пробел в конце имени). Сканы без текста — читать страницы как картинки (pdftoppm).
