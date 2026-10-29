@@ -124,3 +124,83 @@ open -R "$HOME/Desktop/repetitor-audio.zip"
 `;
 fs.writeFileSync(path.join(__dirname, 'eleven.sh'), el, { mode: 0o755 });
 console.log('eleven.sh: символов на одну скорость ≈', list.map(elText).join('').length);
+
+/* ---------- Kokoro (открытая нейросеть, работает на Маке, без регистрации и ограничений по странам): tools/kokoro.sh ----------
+   bash kokoro.sh          — образцы голосов heart / bella / emma → ~/Desktop/repetitor-voices
+   bash kokoro.sh heart    — вся озвучка → ~/Desktop/repetitor-audio.zip
+   Скорость — настройка самой модели (без растягивания звука). */
+const kPhrases = list.map(p => ({ id: audioId(p), text: elText(p) }));
+const kjs = `import { KokoroTTS } from 'kokoro-js';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+const VOICES = { heart: 'af_heart', bella: 'af_bella', emma: 'bf_emma' };
+const NORMAL = 0.9, SLOW = 0.75;
+const PHRASES = ${JSON.stringify(kPhrases)};
+const mode = process.argv[2] || '';
+const desk = os.homedir() + '/Desktop';
+console.log('Загружаю модель (первый раз скачивается ~90 МБ)…');
+let tts;
+try {
+  tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'q8', device: 'cpu' });
+} catch (e) {
+  console.error('Не удалось скачать модель с huggingface.co: ' + e.message + '\\nВключи VPN и запусти ещё раз.');
+  process.exit(1);
+}
+async function save(text, voice, speed, file) {
+  const audio = await tts.generate(text, { voice, speed });
+  const wav = file.replace(/\\.m4a$/, '.wav');
+  audio.save(wav);
+  execFileSync('afconvert', ['-f', 'm4af', '-d', 'aac', '-b', '128000', wav, file]);
+  fs.unlinkSync(wav);
+}
+if (!mode) {
+  const dir = desk + '/repetitor-voices';
+  fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
+  for (const [name, v] of Object.entries(VOICES)) {
+    process.stdout.write('Образец: ' + name + '… ');
+    await save('I. You. Your. Yours. She is reading now.', v, NORMAL, dir + '/' + name + '.m4a');
+    await save('Your. Yours. She is reading now.', v, SLOW, dir + '/' + name + '-slow.m4a');
+    console.log('готово');
+  }
+  console.log('Послушай файлы в папке repetitor-voices на Рабочем столе и напиши Claude, какой голос взять.');
+  execFileSync('open', [dir]);
+} else {
+  const v = VOICES[mode];
+  if (!v) { console.error('Нет такого голоса: ' + mode + ' (есть heart, bella, emma)'); process.exit(1); }
+  const dir = desk + '/repetitor-audio';
+  fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
+  console.log('Голос: ' + mode + '. Записываю ' + PHRASES.length + ' фраз (обычно и медленно)…');
+  for (const p of PHRASES) {
+    await save(p.text, v, NORMAL, dir + '/' + p.id + '.m4a');
+    await save(p.text, v, SLOW, dir + '/' + p.id + '-s.m4a');
+    process.stdout.write('.');
+  }
+  console.log();
+  fs.rmSync(desk + '/repetitor-audio.zip', { force: true });
+  execFileSync('zip', ['-qr', 'repetitor-audio.zip', 'repetitor-audio'], { cwd: desk });
+  console.log('Готово: на Рабочем столе repetitor-audio.zip — пришли его Claude.');
+  execFileSync('open', ['-R', desk + '/repetitor-audio.zip']);
+}
+`;
+const ksh = `#!/bin/bash
+# Озвучка английских фраз сайта «Репетитор» нейросетью Kokoro прямо на этом Маке. Фраз: ${list.length}.
+# Сгенерировано tools/audio-phrases.js — не правь вручную.
+set -e
+if ! command -v node >/dev/null 2>&1; then
+  echo "Нужен Node.js. Открываю nodejs.org — скачай версию LTS, установи и запусти команду ещё раз."
+  open https://nodejs.org/
+  exit 1
+fi
+W="$HOME/.repetitor-tts"
+mkdir -p "$W"; cd "$W"
+if [ ! -d node_modules/kokoro-js ]; then
+  echo "Устанавливаю нейросеть (один раз, пара минут)…"
+  [ -f package.json ] || npm init -y >/dev/null
+  npm install kokoro-js@1.2.1 --no-audit --no-fund --loglevel=error
+fi
+cat > gen.mjs <<'KOKORO_JS'
+${kjs}KOKORO_JS
+node gen.mjs "$@"
+`;
+fs.writeFileSync(path.join(__dirname, 'kokoro.sh'), ksh, { mode: 0o755 });

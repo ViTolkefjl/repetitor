@@ -144,15 +144,15 @@ GitHub Pages обновляется ~1 минуту после пуша.
 
 ## Озвучка живым голосом (записанные файлы)
 
-Синтез браузера и голоса macOS (Jamie) Виталий забраковал: нужно чётко, понятно, громко. Решено (29.10.2026): ElevenLabs.
-`node tools/audio-phrases.js` → `tools/eleven.sh` (пушим) → Виталий в Терминале:
-`curl -fsSL https://vitolkefjl.github.io/repetitor/tools/eleven.sh -o ~/Desktop/eleven.sh && bash ~/Desktop/eleven.sh` — образцы
-голосов alice / lily / matilda; потом `bash ~/Desktop/eleven.sh <голос>` — вся озвучка → `repetitor-audio.zip`.
-Ключ API вводится скрыто, нигде не сохраняется. Скорость — родная настройка ElevenLabs (0.9 обычно, 0.75 медленно).
-Приём архива: файлы в `audio/`, `node tools/audio-index.js` (пишет `{ ext, ids }`). Нет файла — синтез браузера.
-НЕ замедлять записи ffmpeg (atempo): Виталию не понравились призвуки. Громкость выравнивать можно (loudnorm), темп — нет.
-Бесплатный тариф ElevenLabs: 10 000 символов в месяц, некоммерческое использование; урок ≈ 1 000 символов (две скорости).
-Старый вариант `tools/make-audio.sh` (голос macOS) оставлен как запасной.
+Синтез браузера и голоса macOS (Jamie) Виталий забраковал: нужно чётко, понятно, громко. ElevenLabs закрыт для России по санкциям
+(блокирует и VPN) — обходить НЕ предлагать. Решено (29.10.2026): Kokoro (открытая модель Apache-2.0) на Маке Виталия.
+`node tools/audio-phrases.js` → `tools/kokoro.sh` (пушим) → Виталий в Терминале:
+`curl -fsSL https://vitolkefjl.github.io/repetitor/tools/kokoro.sh -o ~/Desktop/kokoro.sh && bash ~/Desktop/kokoro.sh` — образцы
+голосов heart / bella / emma; потом `bash ~/Desktop/kokoro.sh <голос>` — вся озвучка → `repetitor-audio.zip` (m4a).
+Нужен Node.js на Маке; модель (~90 МБ) качается с huggingface.co один раз в `~/.repetitor-tts`. Скорость — настройка модели (0.9 / 0.75).
+Приём архива: файлы в `audio/`, при необходимости выровнять громкость (ffmpeg loudnorm), `node tools/audio-index.js`. Нет файла — синтез браузера.
+НЕ замедлять записи ffmpeg (atempo): Виталию не понравились призвуки. Громкость выравнивать можно, темп — нет.
+Запасные: `tools/make-audio.sh` (голос macOS), `tools/eleven.sh` (ElevenLabs — из России недоступен).
 
 ## Учебники (3 класс, 1 часть) — на Маке Виталия, в репозиторий НЕ класть
 Папка `/Users/vitaliy/Костя/Учебники /` (пробел в конце имени). Сканы без текста — читать страницы как картинки (pdftoppm).
